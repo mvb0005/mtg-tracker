@@ -14,6 +14,8 @@ mtg = "mtgtracker.cli:app"
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
 ]
 
 [build-system]
@@ -25,3 +27,17 @@ include = ["mtgtracker*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 110
+extend-exclude = [".scryfall_cache"]
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, isort, bugbear, pyupgrade, plus a few low-noise
+# extras: simplify, comprehensions, pytest style, ruff-specific.
+select = ["E", "F", "I", "B", "UP", "SIM", "C4", "PT", "RUF"]
+
+[tool.ruff.lint.flake8-bugbear]
+# typer's documented idiom is typer.Argument/Option as parameter defaults.
+extend-immutable-calls = ["typer.Argument", "typer.Option"]

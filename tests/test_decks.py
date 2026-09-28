@@ -90,3 +90,149 @@ def test_borrow_cut_reassemble_worked_example():
     # are now unequipped there.
     keen_reassemble = reassemble(conn, keen)
     assert {row["lot_id"] for row in keen_reassemble} == set(borrowed_from_keen)
+
+
+def _equipped_in(conn, lot_id):
+    return [
+        row["deck_id"]
+        for row in conn.execute(
+            "SELECT deck_id FROM deck_cards WHERE lot_id = ? AND equipped = 1", (lot_id,)
+        ).fetchall()
+    ]
+
+
+def _listed_in(conn, lot_id):
+    return sorted(
+        row["deck_id"]
+        for row in conn.execute("SELECT deck_id FROM deck_cards WHERE lot_id = ?", (lot_id,)).fetchall()
+    )
+
+
+def test_create_deck_defaults():
+    conn = _make_conn()
+    deck_id = create_deck(conn, "Deck", "2026-01-01")
+    deck = conn.execute("SELECT * FROM decks WHERE id = ?", (deck_id,)).fetchone()
+    assert deck["format"] == "Commander"
+    assert deck["notes"] is None
+
+    other = create_deck(conn, "Cube", "2026-01-02", format="Cube", notes="for game night")
+    deck = conn.execute("SELECT * FROM decks WHERE id = ?", (other,)).fetchone()
+    assert (deck["format"], deck["notes"]) == ("Cube", "for game night")
+
+
+def test_add_to_deck_equipped_moves_physical_location():
+    conn = _make_conn()
+    a = create_deck(conn, "A", "t")
+    b = create_deck(conn, "B", "t")
+    (lot,) = _make_lots(conn, 1, "Card")
+
+    add_to_deck(conn, a, lot, equipped=True)
+    add_to_deck(conn, b, lot, equipped=True)
+
+    assert _equipped_in(conn, lot) == [b]
+    assert _listed_in(conn, lot) == [a, b]
+
+
+def test_add_to_deck_unequipped_leaves_card_where_it_is():
+    conn = _make_conn()
+    a = create_deck(conn, "A", "t")
+    b = create_deck(conn, "B", "t")
+    (lot,) = _make_lots(conn, 1, "Card")
+
+    add_to_deck(conn, a, lot, equipped=True)
+    add_to_deck(conn, b, lot)
+
+    assert _equipped_in(conn, lot) == [a]
+    assert _listed_in(conn, lot) == [a, b]
+    assert reassemble(conn, b) == [{"lot_id": lot, "card_name": "Card 0", "current_deck_id": a}]
+
+
+def test_add_to_deck_twice_does_not_duplicate_the_list_entry():
+    conn = _make_conn()
+    a = create_deck(conn, "A", "t")
+    (lot,) = _make_lots(conn, 1, "Card")
+
+    add_to_deck(conn, a, lot, equipped=True)
+    add_to_deck(conn, a, lot, equipped=True)
+
+    assert _listed_in(conn, lot) == [a]
+    assert _equipped_in(conn, lot) == [a]
+
+
+def test_add_to_deck_unequipped_on_card_already_equipped_there_unequips_it():
+    # Documents current behavior (flagged for review): re-adding a card to
+    # the deck that physically holds it, with the default equipped=False,
+    # overwrites equipped to 0 via the ON CONFLICT upsert. The card ends up
+    # equipped nowhere, and reassemble reports it as unassigned.
+    conn = _make_conn()
+    a = create_deck(conn, "A", "t")
+    (lot,) = _make_lots(conn, 1, "Card")
+
+    add_to_deck(conn, a, lot, equipped=True)
+    add_to_deck(conn, a, lot)
+
+    assert _equipped_in(conn, lot) == []
+    assert reassemble(conn, a) == [{"lot_id": lot, "card_name": "Card 0", "current_deck_id": None}]
+
+
+def test_borrow_adds_to_list_when_absent_and_back_again():
+    conn = _make_conn()
+    a = create_deck(conn, "A", "t")
+    b = create_deck(conn, "B", "t")
+    (lot,) = _make_lots(conn, 1, "Card")
+    add_to_deck(conn, a, lot, equipped=True)
+
+    borrow(conn, lot, b)
+    assert _equipped_in(conn, lot) == [b]
+    assert [r["current_deck_id"] for r in reassemble(conn, a)] == [b]
+
+    # Borrowing it back restores deck A.
+    borrow(conn, lot, a)
+    assert _equipped_in(conn, lot) == [a]
+    assert reassemble(conn, a) == []
+    assert [r["current_deck_id"] for r in reassemble(conn, b)] == [a]
+
+
+def test_cut_equipped_card_leaves_it_equipped_nowhere():
+    conn = _make_conn()
+    a = create_deck(conn, "A", "t")
+    b = create_deck(conn, "B", "t")
+    (lot,) = _make_lots(conn, 1, "Card")
+    add_to_deck(conn, a, lot, equipped=True)
+    add_to_deck(conn, b, lot)
+
+    cut(conn, a, lot)
+
+    assert _listed_in(conn, lot) == [b]
+    assert _equipped_in(conn, lot) == []
+    assert reassemble(conn, a) == []
+    assert reassemble(conn, b) == [{"lot_id": lot, "card_name": "Card 0", "current_deck_id": None}]
+
+
+def test_cut_card_not_on_list_is_a_noop():
+    conn = _make_conn()
+    a = create_deck(conn, "A", "t")
+    (lot,) = _make_lots(conn, 1, "Card")
+
+    cut(conn, a, lot)
+
+    assert _listed_in(conn, lot) == []
+
+
+def test_reassemble_is_sorted_by_card_name():
+    conn = _make_conn()
+    a = create_deck(conn, "A", "t")
+    b = create_deck(conn, "B", "t")
+    lots = _make_lots(conn, 3, "Card")
+    for lot in reversed(lots):
+        add_to_deck(conn, a, lot, equipped=True)
+        borrow(conn, lot, b)
+
+    assert [r["card_name"] for r in reassemble(conn, a)] == ["Card 0", "Card 1", "Card 2"]
+
+
+def test_reassemble_empty_or_unknown_deck():
+    conn = _make_conn()
+    a = create_deck(conn, "A", "t")
+    assert reassemble(conn, a) == []
+    assert reassemble(conn, 999) == []

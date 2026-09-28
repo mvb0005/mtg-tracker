@@ -20,7 +20,13 @@ from __future__ import annotations
 import sqlite3
 
 
-def create_deck(conn: sqlite3.Connection, name: str, created_at: str, format: str = "Commander", notes: str | None = None) -> int:
+def create_deck(
+    conn: sqlite3.Connection,
+    name: str,
+    created_at: str,
+    format: str = "Commander",
+    notes: str | None = None,
+) -> int:
     cur = conn.execute(
         "INSERT INTO decks (name, format, created_at, notes) VALUES (?, ?, ?, ?)",
         (name, format, created_at, notes),

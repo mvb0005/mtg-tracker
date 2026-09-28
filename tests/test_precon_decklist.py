@@ -24,7 +24,7 @@ def fixture_scryfall_cache(tmp_path, monkeypatch):
     cache_dir.mkdir()
     shutil.copy(FIXTURE_SET_DATA, cache_dir / "fdc.json")
     monkeypatch.setattr(scryfall, "CACHE_DIR", cache_dir)
-    yield cache_dir
+    return cache_dir
 
 
 def _make_conn():
@@ -109,7 +109,7 @@ def test_seed_precon_deck_creates_100_lots_all_equipped_and_allocated():
 
     result = seed_precon_deck_for_product(conn, product_id)
     assert result is not None
-    deck_id, report = result
+    deck_id, _report = result
 
     lots = conn.execute(
         "SELECT * FROM lots WHERE product_id = ?", (product_id,)
@@ -149,3 +149,106 @@ def test_unknown_product_returns_none():
     product_id = _make_transaction_and_product(conn, "Some Random Booster Box", 1000)
 
     assert seed_precon_deck_for_product(conn, product_id) is None
+
+
+def test_seeding_twice_is_a_noop():
+    conn = _make_conn()
+    product_id = _make_transaction_and_product(
+        conn, "Foundations Commander Deck - Keen Engineering", cost_basis_cents=3868
+    )
+
+    assert seed_precon_deck_for_product(conn, product_id) is not None
+    assert seed_precon_deck_for_product(conn, product_id) is None
+
+    assert conn.execute("SELECT COUNT(*) FROM decks").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM lots").fetchone()[0] == 100
+
+
+def test_seed_unknown_product_id_raises():
+    conn = _make_conn()
+    with pytest.raises(ValueError, match="no product with id 999"):
+        seed_precon_deck_for_product(conn, 999)
+
+
+def _card(card_id, name, finishes):
+    return {"id": card_id, "name": name, "set": "tst", "collector_number": card_id[1:], "finishes": finishes}
+
+
+def _write_test_set(cache_dir, cards):
+    (cache_dir / "tst.json").write_text(json.dumps(cards))
+
+
+def _test_seed(commander, cards, basics=None):
+    return {
+        "deck_name": "Test Deck",
+        "product_display_name": "Test Deck Product",
+        "format": "Commander",
+        "commander": commander,
+        "set_code": "tst",
+        "cards": cards,
+        "basics": basics or {},
+    }
+
+
+def test_resolve_reports_not_found_names(fixture_scryfall_cache):
+    _write_test_set(
+        fixture_scryfall_cache,
+        [_card("c1", "Real Commander", ["foil"])],
+    )
+    seed = _test_seed("Real Commander", ["Real Commander", "Made Up Card"], basics={"Island": 3})
+
+    report = resolve_decklist(seed)
+
+    assert [r["name"] for r in report.resolved] == ["Real Commander"]
+    assert report.resolved[0]["finish"] == "foil"
+    assert report.not_found == ["Made Up Card"]
+    assert report.ambiguous == []
+    assert report.basics_unresolved == ["Island"]
+    assert report.has_issues()
+
+
+def test_commander_without_foil_printing_is_ambiguous_not_guessed(fixture_scryfall_cache):
+    _write_test_set(
+        fixture_scryfall_cache,
+        [
+            _card("c1", "Nonfoil Cmdr", ["nonfoil"]),
+            _card("c2", "Other Card", ["nonfoil"]),
+        ],
+    )
+    seed = _test_seed("Nonfoil Cmdr", ["Nonfoil Cmdr", "Other Card"])
+
+    report = resolve_decklist(seed)
+
+    assert [a["name"] for a in report.ambiguous] == ["Nonfoil Cmdr"]
+    assert "should be foil" in report.ambiguous[0]["reason"]
+    # A non-commander card with only a nonfoil finish resolves normally.
+    assert [(r["name"], r["finish"]) for r in report.resolved] == [("Other Card", "nonfoil")]
+
+
+def test_unresolved_cards_still_get_lots_with_null_scryfall_id(fixture_scryfall_cache, monkeypatch):
+    from mtgtracker.importers import precon_decklist
+
+    _write_test_set(
+        fixture_scryfall_cache,
+        [_card("c2", "Other Card", ["nonfoil"])],
+    )
+    seed = _test_seed("Missing Cmdr", ["Missing Cmdr", "Other Card"], basics={"Island": 98})
+    monkeypatch.setattr(precon_decklist, "load_seed_decklists", lambda: [seed])
+
+    conn = _make_conn()
+    product_id = _make_transaction_and_product(conn, "Test Deck Product", cost_basis_cents=1000)
+    deck_id, report = seed_precon_deck_for_product(conn, product_id)
+
+    assert report.not_found == ["Missing Cmdr"]
+    lots = {
+        row["card_name"]: row
+        for row in conn.execute("SELECT * FROM lots WHERE product_id = ?", (product_id,)).fetchall()
+    }
+    assert lots["Missing Cmdr"]["scryfall_id"] is None
+    assert lots["Missing Cmdr"]["finish"] == "foil"  # commander is still expected foil
+    assert lots["Other Card"]["scryfall_id"] == "c2"
+    assert conn.execute("SELECT COUNT(*) FROM lots").fetchone()[0] == 100
+    equipped = conn.execute(
+        "SELECT COUNT(*) FROM deck_cards WHERE deck_id = ? AND equipped = 1", (deck_id,)
+    ).fetchone()[0]
+    assert equipped == 100

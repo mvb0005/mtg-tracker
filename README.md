@@ -19,11 +19,17 @@ mtg list-decks
 mtg reassemble-deck <deck-id>          # what to pull back to reassemble a deck's list
 ```
 
-## Tests
+## Tests and linting
 
 ```
-.venv/bin/pytest
+.venv/bin/pytest                                           # all tests (network-free)
+.venv/bin/pytest --cov=mtgtracker --cov-branch --cov-report=term-missing   # with coverage
+.venv/bin/ruff check .                                     # lint (config in pyproject.toml)
+.venv/bin/ruff check --fix .                               # apply safe autofixes
 ```
+
+`ruff format` is deliberately not adopted: it would reflow the packed SQL
+parameter tuples one value per line, for no functional gain.
 
 ## Data model, in short
 

@@ -28,7 +28,7 @@ import re
 import sqlite3
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from mtgtracker.money import largest_remainder_split, parse_cents
@@ -132,7 +132,12 @@ def import_order_file(conn: sqlite3.Connection, path: str | Path, receipts_dir: 
 
     # tax + shipping allocated pro-rata across products, by line subtotal
     extra_cents = tax_cents + shipping_cents
-    extra_allocations = largest_remainder_split(extra_cents, line_subtotals) if line_subtotals else []
+    # With nothing to allocate, every share is 0; skip the split so an
+    # all-$0 order (weights summing to 0) doesn't trip its sum > 0 check.
+    if extra_cents == 0:
+        extra_allocations = [0] * len(line_subtotals)
+    else:
+        extra_allocations = largest_remainder_split(extra_cents, line_subtotals) if line_subtotals else []
 
     existing_txn = conn.execute(
         "SELECT id, updated_at FROM transactions WHERE order_type_identifier = ? AND order_identifier = ?",
@@ -160,7 +165,9 @@ def import_order_file(conn: sqlite3.Connection, path: str | Path, receipts_dir: 
         transaction_id = cur.lastrowid
         created = True
 
-        for line, line_subtotal, extra_alloc in zip(line_items, line_subtotals, extra_allocations):
+        for line, line_subtotal, extra_alloc in zip(
+            line_items, line_subtotals, extra_allocations, strict=True
+        ):
             title = line["title"]
             unit_price_cents = parse_cents(line["price"]["amount"])
             qty = line.get("quantity", 1)
@@ -205,7 +212,7 @@ def import_order_file(conn: sqlite3.Connection, path: str | Path, receipts_dir: 
         """,
         (
             transaction_id, file_hash, path.name, "application/vnd.apple.pkpass+order",
-            "order", datetime.now(timezone.utc).isoformat(),
+            "order", datetime.now(UTC).isoformat(),
         ),
     )
 

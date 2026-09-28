@@ -55,7 +55,7 @@ def allocate(conn: sqlite3.Connection, product_id: int) -> list[int]:
     weights = [1] * len(lot_ids)
     shares = largest_remainder_split(product["cost_basis_cents"], weights)
 
-    for lot_id, share in zip(lot_ids, shares):
+    for lot_id, share in zip(lot_ids, shares, strict=True):
         conn.execute(
             "UPDATE lots SET allocated_cost_cents = ? WHERE id = ?",
             (share, lot_id),
