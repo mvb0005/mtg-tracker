@@ -1,0 +1,5 @@
+{# Hover/focus card details, shown beside the content on wide screens with a mouse (see card-panel.js). #}
+<aside id="card-panel" class="card-panel" aria-live="polite" aria-label="Card details">
+  <p class="card-panel-empty subtle">Hover over a card to see its details.</p>
+</aside>
+<script src="{{ url_for('static', path='card-panel.js') }}?v={{ static_version('card-panel.js') }}" defer></script>

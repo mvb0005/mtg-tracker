@@ -1,0 +1,17 @@
+<div class="table-wrap">
+<table>
+  <thead><tr><th class="num">Qty</th><th>Card</th><th>Finish</th><th>From</th><th>In deck</th><th></th></tr></thead>
+  <tbody>
+  {% for g in rows %}
+    <tr>
+      <td class="num">{{ g.qty }}</td>
+      <td class="name">{{ g.card_name }}</td>
+      <td>{{ g.finish }}</td>
+      <td class="name">{{ g.product_name or "—" }}</td>
+      <td>{% if g.deck_id is not none %}<a href="/decks/{{ g.deck_id }}">{{ g.deck_name }}</a>{% else %}<span class="subtle">unassigned</span>{% endif %}</td>
+      <td><a href="/printings/{{ g.lot_id }}">Pick printing →</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>

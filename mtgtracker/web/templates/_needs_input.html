@@ -1,6 +1,6 @@
 {% if needs_input %}
 <div class="callout">
-  <strong>Needs your input:</strong> these cards couldn't be matched to a single printing. Check the physical cards.
+  <strong>Needs your input:</strong> these cards couldn't be matched to a single printing. Check the physical cards. <a href="/printings">Pick printings →</a>
   <ul>
     {% for row in needs_input %}
       <li>{{ row.qty }}× {{ row.card_name }}{% if row.finish != "nonfoil" %} ({{ row.finish }}){% endif %}{% if row.product_name %} <span class="subtle">from {{ row.product_name }}</span>{% endif %}</li>

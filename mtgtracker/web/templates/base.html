@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}mtgtracker{% endblock %} · mtgtracker</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v={{ static_version('style.css') }}">
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
   <header>
     <nav>
       <a class="brand" href="/">mtgtracker</a>
-      {% set nav = [("/", "Overview", "dashboard"), ("/decks", "Decks", "decks"), ("/cards", "Cards", "cards"), ("/transactions", "Purchases", "transactions")] %}
+      {% set nav = [("/", "Overview", "dashboard"), ("/decks", "Decks", "decks"), ("/cards", "Cards", "cards"), ("/printings", "Printings", "printings"), ("/transactions", "Purchases", "transactions")] %}
       {% for href, label, key in nav %}
         <a href="{{ href }}"{% if active == key %} aria-current="page"{% endif %}>{{ label }}</a>
       {% endfor %}
@@ -19,5 +19,6 @@
   <main>
     {% block content %}{% endblock %}
   </main>
+  {% block panel %}{% endblock %}
 </body>
 </html>

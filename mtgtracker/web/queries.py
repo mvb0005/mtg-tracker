@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import sqlite3
 
+from mtgtracker import cardinfo
 from mtgtracker.decks import reassemble
+from mtgtracker.printings import BASIC_LAND_NAMES
 
-BASIC_LAND_NAMES = ("Plains", "Island", "Swamp", "Mountain", "Forest", "Wastes")
+COMMANDER_SECTION = "Commander"
 _BASICS_SQL = ", ".join("?" for _ in BASIC_LAND_NAMES)
 
 
@@ -98,6 +100,8 @@ def get_deck(conn: sqlite3.Connection, deck_id: int) -> dict | None:
                current.deck_id AS current_deck_id,
                current_deck.name AS current_deck_name,
                COUNT(*) AS qty,
+               MIN(lots.id) AS lot_id,
+               MIN(lots.scryfall_id) AS scryfall_id,
                SUM(lots.allocated_cost_cents) AS cost_cents
         FROM deck_cards
         JOIN lots ON lots.id = deck_cards.lot_id
@@ -111,6 +115,18 @@ def get_deck(conn: sqlite3.Connection, deck_id: int) -> dict | None:
         """,
         (*BASIC_LAND_NAMES, deck_id),
     ).fetchall()
+    # Commander first, then highest mana value first (list view uses the
+    # same order); the grid additionally splits by type.
+    commander = deck["commander"]
+    groups = sorted(
+        _with_card_info(groups),
+        key=lambda g: (g["card_name"] != commander, cardinfo.mana_value_order(g["card_name"], g["art"])),
+    )
+
+    sections: dict[str, list[dict]] = {}
+    for group in groups:
+        label = COMMANDER_SECTION if group["card_name"] == commander else group["category"]
+        sections.setdefault(label, []).append(group)
 
     list_cost = conn.execute(
         "SELECT COALESCE(SUM(lots.allocated_cost_cents), 0) FROM deck_cards"
@@ -121,6 +137,11 @@ def get_deck(conn: sqlite3.Connection, deck_id: int) -> dict | None:
     return {
         "deck": deck,
         "groups": groups,
+        "sections": [
+            (label, sections[label], sum(g["qty"] for g in sections[label]))
+            for label in [COMMANDER_SECTION, *cardinfo.SECTION_ORDER]
+            if label in sections
+        ],
         "list_count": sum(g["qty"] for g in groups),
         "equipped_count": sum(g["qty"] for g in groups if g["equipped"]),
         "list_cost_cents": list_cost,
@@ -129,14 +150,16 @@ def get_deck(conn: sqlite3.Connection, deck_id: int) -> dict | None:
     }
 
 
-def search_cards(conn: sqlite3.Connection, query: str = "") -> list[sqlite3.Row]:
-    return conn.execute(
+def search_cards(conn: sqlite3.Connection, query: str = "") -> list[dict]:
+    rows = conn.execute(
         """
         SELECT lots.card_name, lots.set_code, lots.collector_number, lots.finish,
                current.deck_id AS current_deck_id,
                decks.name AS current_deck_name,
                dispositions.disposition_type,
                COUNT(*) AS qty,
+               MIN(lots.id) AS lot_id,
+               MIN(lots.scryfall_id) AS scryfall_id,
                SUM(lots.allocated_cost_cents) AS cost_cents
         FROM lots
         LEFT JOIN deck_cards AS current ON current.lot_id = lots.id AND current.equipped = 1
@@ -149,6 +172,22 @@ def search_cards(conn: sqlite3.Connection, query: str = "") -> list[sqlite3.Row]
         """,
         ("%" + _escape_like(query.strip()) + "%",),
     ).fetchall()
+    return sorted(
+        _with_card_info(rows), key=lambda c: cardinfo.mana_value_order(c["card_name"], c["art"])
+    )
+
+
+def _with_card_info(rows: list[sqlite3.Row]) -> list[dict]:
+    """Rows as dicts plus `art` (image/type from the Scryfall cache, never
+    the network) and `category` (deck-list section)."""
+    result = []
+    for row in rows:
+        item = dict(row)
+        art = cardinfo.lookup(item["scryfall_id"], item["card_name"], item["finish"])
+        item["art"] = art
+        item["category"] = art.category(item["card_name"])
+        result.append(item)
+    return result
 
 
 def needs_input(conn: sqlite3.Connection) -> list[sqlite3.Row]:

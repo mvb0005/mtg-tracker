@@ -17,7 +17,7 @@ python3 -m venv .venv
 mtg import-order path/to/Order.order   # imports the purchase, seeds known precon decks
 mtg list-decks
 mtg reassemble-deck <deck-id>          # what to pull back to reassemble a deck's list
-mtg serve                              # read-only web UI at http://127.0.0.1:8000
+mtg serve                              # web UI at http://127.0.0.1:8000
 ```
 
 ## Running on minikube
@@ -25,6 +25,7 @@ mtg serve                              # read-only web UI at http://127.0.0.1:80
 ```
 deploy/minikube.sh up                  # build image into minikube, apply deploy/k8s, wait
 deploy/minikube.sh load-db             # snapshot data/mtgtracker.db (+ receipts/) into the pod's volume
+deploy/minikube.sh pull-db             # copy the cluster DB back to data/mtgtracker.db (old one backed up)
 deploy/minikube.sh forward             # UI at http://127.0.0.1:8000
 deploy/minikube.sh import Order.order  # or import straight into the cluster DB
 deploy/minikube.sh down                # remove the app, keep the data volume
@@ -36,9 +37,9 @@ and reached through port-forward, so nothing is exposed beyond this machine.
 Your database and receipts are never baked into the image.
 
 The cluster keeps its own copy of the database on a persistent volume,
-separate from the local `data/mtgtracker.db`. `load-db` replaces the cluster
-copy wholesale, so anything added there with `import` is lost unless you
-imported it locally too.
+separate from the local `data/mtgtracker.db`. Printings you pick in the UI and
+orders added with `import` land in the cluster copy. Run `pull-db` before
+`load-db`, because `load-db` replaces the cluster copy wholesale.
 
 ## Tests and linting
 
@@ -82,10 +83,15 @@ the physical box in hand:
 
 - **Sol Ring** and **Arcane Signet** each have two `fdc`-set printings, and
   nothing in the published decklist says which one shipped in this box —
-  each got a lot with `scryfall_id` left `NULL` rather than guessed. Check
-  the physical cards and fill these in by hand if you want them pinned down.
+  each got a lot with `scryfall_id` left `NULL` rather than guessed.
 - Basic lands (32 Mountain, 34 Island) are never resolved to a specific art
   — there's no way to know which printing shipped in the box.
+
+Settle these from the physical cards on the web UI's **Printings** page
+(`/printings`). It lists every unresolved card and offers the candidate
+printings from locally cached Scryfall sets, with images. For basics, look
+up the set code printed on the card (bottom-left) to fetch that set once,
+then split the copies across arts.
 
 None of this blocks cost allocation (it's by count, not by card), only
 future Scryfall-id-dependent features.

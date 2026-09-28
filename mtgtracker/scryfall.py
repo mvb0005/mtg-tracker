@@ -52,6 +52,20 @@ def fetch_set_cards(set_code: str, *, use_cache: bool = True) -> list[dict]:
     return cards
 
 
+_cached_cards: dict[str, object] = {}
+
+
+def cached_cards() -> list[dict]:
+    """Every card from every set already in CACHE_DIR, never hitting the
+    network. Parsed once and reused until a cache file is added or changes."""
+    files = sorted(CACHE_DIR.glob("*.json"))
+    key = tuple((str(p), p.stat().st_mtime_ns) for p in files)
+    if _cached_cards.get("key") != key:
+        _cached_cards["cards"] = [card for p in files for card in json.loads(p.read_text())]
+        _cached_cards["key"] = key
+    return _cached_cards["cards"]  # type: ignore[return-value]
+
+
 def index_by_name(cards: list[dict]) -> dict[str, list[dict]]:
     index: dict[str, list[dict]] = {}
     for card in cards:

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% set active = "printings" %}
+{% block title %}{{ group.card_name }} · Printings{% endblock %}
+{% block content %}
+<p><a href="/printings">← Printings</a></p>
+<h1>{{ group.qty }}× {{ group.card_name }}</h1>
+<p class="subtle">
+  Recorded as {{ group.finish }}
+  {%- if group.product_name %} · from {{ group.product_name }}{% endif %}
+  {%- if group.deck_id is not none %} · in <a href="/decks/{{ group.deck_id }}">{{ group.deck_name }}</a>{% endif %}
+</p>
+{% include "_flash.html" %}
+
+<p>Check the bottom-left corner of the physical card{{ "s" if group.qty > 1 }} for the set code and collector number, then pick the matching printing and finish.
+{% if group.qty > 1 %}If the copies differ (e.g. several land arts), split the count between printings. You can leave some for later.{% endif %}</p>
+
+{% if candidates %}
+<form method="post" action="/printings/{{ group.lot_ids[0] }}">
+  <div class="printing-grid">
+  {% for c in candidates %}
+    <div class="printing">
+      {% if c.image %}<img src="{{ c.image }}" alt="{{ c.name }}, {{ c.set | upper }} #{{ c.collector_number }}" loading="lazy" referrerpolicy="no-referrer">{% endif %}
+      <div class="printing-body">
+        <div class="printing-id">{{ c.set | upper }} #{{ c.collector_number }}</div>
+        <div class="subtle">{{ c.set_name or "" }}{% if c.released_at %} · {{ c.released_at[:4] }}{% endif %}</div>
+        {% if c.artist %}<div class="subtle">Art: {{ c.artist }}</div>{% endif %}
+        <div class="printing-tags">
+          {% if c.rarity %}<span class="tag">{{ c.rarity }}</span>{% endif %}
+          {% if c.full_art %}<span class="tag">full art</span>{% endif %}
+          {% for p in c.promo_types %}<span class="tag">{{ p }}</span>{% endfor %}
+        </div>
+        <div class="printing-options">
+        {% for finish in c.finishes %}
+          {% set value = c.id ~ "|" ~ finish %}
+          <label class="option{% if finish == group.finish %} match{% endif %}">
+            {% if group.qty == 1 %}
+              <input type="radio" name="choice" value="{{ value }}" required>
+            {% else %}
+              <input type="number" name="qty|{{ value }}" min="0" max="{{ group.qty }}" inputmode="numeric" placeholder="0">
+            {% endif %}
+            {{ finish }}{% if finish == group.finish %} <span class="subtle">(as recorded)</span>{% endif %}
+          </label>
+        {% endfor %}
+        {% if not c.finishes %}<span class="subtle">No paper finishes listed.</span>{% endif %}
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+  </div>
+  <p><button type="submit" class="primary">Save</button></p>
+</form>
+{% else %}
+<div class="callout">No printings of {{ group.card_name }} in the cached sets ({{ cached_sets | map("upper") | join(", ") or "none" }}). Look up the set printed on the card below.</div>
+{% endif %}
+
+<h2>Not listed?</h2>
+<form class="search" method="post" action="/printings/{{ group.lot_ids[0] }}/fetch-set">
+  <input type="text" name="set_code" placeholder="Set code, e.g. FDN" aria-label="Set code" autocapitalize="characters" required>
+  <button type="submit">Look up set</button>
+</form>
+<p class="subtle">Fetches that set's printings from Scryfall once and caches them locally. Already cached: {{ cached_sets | map("upper") | join(", ") or "none" }}.</p>
+{% endblock %}

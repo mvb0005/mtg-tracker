@@ -109,7 +109,7 @@ def serve(
     port: int = typer.Option(8000, help="Port"),
     reload: bool = typer.Option(False, help="Reload on code changes (development)"),
 ):
-    """Serve the read-only web UI."""
+    """Serve the web UI."""
     import uvicorn
 
     if reload:

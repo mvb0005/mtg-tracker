@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% set active = "decks" %}
 {% block title %}{{ deck.name }}{% endblock %}
+{% import "_card_tiles.html" as cards with context %}
+{% block body_class %}with-panel{% endblock %}
+{% block panel %}{% include "_card_panel.html" %}{% endblock %}
 {% block content %}
 <p><a href="/decks">← Decks</a></p>
 <h1>{{ deck.name }}</h1>
@@ -33,17 +36,49 @@
 <p><span class="tag ok">assembled</span> Every card on the list is in the deck.</p>
 {% endif %}
 
-<h2>Decklist</h2>
+<div class="section-head">
+  <h2>Decklist</h2>
+  {{ cards.view_toggle(view, "/decks/" ~ deck.id) }}
+</div>
+{% include "_flash.html" %}
+{% if deck.format == "Commander" %}
+<details class="commander-picker"{% if not deck.commander %} open{% endif %}>
+  <summary>{% if deck.commander %}Commander: <strong>{{ deck.commander }}</strong> · change{% else %}Choose a commander{% endif %}</summary>
+  {% if commander_options %}
+  <form method="post" action="/decks/{{ deck.id }}/commander">
+    <div class="picker-grid">
+      {% for c in commander_options %}
+      {#- Reuse the deck's own row for this card so the hover panel also shows location and cost. -#}
+      {% set row = groups | selectattr("card_name", "equalto", c.card_name) | first %}
+      <label class="picker-option"{% if row %} data-card='{{ cards.panel_json(row, "deck") }}'{% endif %}>
+        <input type="radio" name="commander" value="{{ c.card_name }}"{% if c.card_name == deck.commander %} checked{% endif %}>
+        {% if c.art.image %}<img src="{{ c.art.image }}" alt="{{ c.card_name }}" loading="lazy" referrerpolicy="no-referrer">
+        {% else %}<span class="tile-placeholder"><span>{{ c.card_name }}</span></span>{% endif %}
+      </label>
+      {% endfor %}
+    </div>
+    <div class="picker-actions">
+      <label class="option"><input type="radio" name="commander" value=""{% if not deck.commander %} checked{% endif %}> No commander</label>
+      <button type="submit" class="primary">Save commander</button>
+    </div>
+  </form>
+  {% else %}
+  <p class="subtle">No legendary creatures on this deck's list{% if deck.commander %} besides the current one{% endif %}. Only cards with cached Scryfall data can be checked.</p>
+  {% endif %}
+</details>
+{% endif %}
+{% if not groups %}
+<p class="empty">This deck's list is empty.</p>
+{% elif view == "list" %}
 <div class="table-wrap">
-{% if groups %}
 <table>
   <thead><tr><th class="num">Qty</th><th>Card</th><th>Printing</th><th>Finish</th><th>Where</th><th class="num">Cost basis</th></tr></thead>
   <tbody>
   {% for g in groups %}
-    <tr>
+    <tr data-card='{{ cards.panel_json(g, "deck") }}' tabindex="0">
       <td class="num">{{ g.qty }}</td>
-      <td class="name">{{ g.card_name }}{% if g.needs_input %} <span class="tag warn">needs printing</span>{% endif %}</td>
-      <td>{% if g.set_code %}{{ g.set_code | upper }} #{{ g.collector_number }}{% else %}<span class="subtle">—</span>{% endif %}</td>
+      <td class="name">{{ g.card_name }}{% if g.needs_input %} <a class="tag warn" href="/printings/{{ g.lot_id }}">needs printing</a>{% endif %}</td>
+      <td>{% if g.set_code %}{{ g.set_code | upper }} #{{ g.collector_number }}{% else %}<a class="subtle" href="/printings/{{ g.lot_id }}">pick…</a>{% endif %}</td>
       <td>{{ g.finish }}</td>
       <td>
         {% if g.equipped %}<span class="tag ok">here</span>
@@ -55,8 +90,13 @@
   {% endfor %}
   </tbody>
 </table>
-{% else %}
-<p class="empty">This deck's list is empty.</p>
-{% endif %}
 </div>
+{% else %}
+{% for label, section_groups, count in sections %}
+<h3>{{ label }} <span class="subtle">({{ count }})</span></h3>
+<div class="tile-grid">
+  {% for g in section_groups %}{{ cards.tile(g, "deck") }}{% endfor %}
+</div>
+{% endfor %}
+{% endif %}
 {% endblock %}

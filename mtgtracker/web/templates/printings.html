@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% set active = "printings" %}
+{% block title %}Printings{% endblock %}
+{% block content %}
+<h1>Printings</h1>
+<p class="subtle">Cards whose exact printing isn't known yet. Find the set code and collector number in the bottom-left corner of the physical card, then pick the matching printing.</p>
+{% include "_flash.html" %}
+
+{% set nonbasics = groups | rejectattr("is_basic") | list %}
+{% set basics = groups | selectattr("is_basic") | list %}
+
+<h2>Needs your input</h2>
+{% if nonbasics %}
+{% with rows = nonbasics %}{% include "_printing_groups.html" %}{% endwith %}
+{% else %}
+<p><span class="tag ok">all set</span> Every non-basic card is pinned to a printing.</p>
+{% endif %}
+
+<h2>Basic lands <span class="subtle">(optional)</span></h2>
+<p class="subtle">Only worth doing if you care which land art is in which deck.</p>
+{% if basics %}
+{% with rows = basics %}{% include "_printing_groups.html" %}{% endwith %}
+{% else %}
+<p class="subtle">No unresolved basics.</p>
+{% endif %}
+
+<p class="subtle">Printings are looked up from locally cached sets: {{ cached_sets | map("upper") | join(", ") or "none yet" }}.</p>
+{% endblock %}

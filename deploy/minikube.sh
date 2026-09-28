@@ -3,8 +3,9 @@
 #
 #   deploy/minikube.sh up                 build the image into minikube, apply manifests, wait
 #   deploy/minikube.sh load-db [DB]       copy a local DB (default data/mtgtracker.db) + receipts/ into the pod
+#   deploy/minikube.sh pull-db [DB]       copy the pod's DB back to a local file (old one kept as a backup)
 #   deploy/minikube.sh import FILE.order  run `mtg import-order` inside the pod against the cluster DB
-#   deploy/minikube.sh forward [PORT]     port-forward the UI to http://127.0.0.1:PORT (default 8000)
+#   deploy/minikube.sh forward [PORT]     port-forward the UI to http://127.0.0.1:PORT (default 8000), reconnecting across redeploys
 #   deploy/minikube.sh down               delete the app but keep the data volume
 #   deploy/minikube.sh destroy            delete everything, including the data volume
 set -euo pipefail
@@ -60,6 +61,31 @@ EOF
   echo "Loaded $src into $p:$DATA/mtgtracker.db"
 }
 
+cmd_pull_db() {
+  local dest=${1:-data/mtgtracker.db}
+  local p
+  p=$(pod)
+
+  # Consistent snapshot inside the pod, then copy it out.
+  "${KUBECTL[@]}" exec "$p" -- python -c "
+import sqlite3
+src, dst = sqlite3.connect('$DATA/mtgtracker.db'), sqlite3.connect('/tmp/pull.db')
+src.backup(dst)
+dst.close(); src.close()
+"
+  mkdir -p "$(dirname "$dest")"
+  "${KUBECTL[@]}" cp "$p:/tmp/pull.db" "$dest.incoming" >/dev/null
+  "${KUBECTL[@]}" exec "$p" -- rm -f /tmp/pull.db
+
+  if [[ -f $dest ]]; then
+    local backup="${dest%.db}.backup-$(date +%Y%m%d-%H%M%S).db"
+    cp "$dest" "$backup"
+    echo "Previous $dest kept as $backup"
+  fi
+  mv "$dest.incoming" "$dest"
+  echo "Pulled $p:$DATA/mtgtracker.db into $dest"
+}
+
 cmd_import() {
   local file=${1:?usage: import FILE.order}
   local p
@@ -73,7 +99,14 @@ cmd_import() {
 cmd_forward() {
   local port=${1:-8000}
   echo "mtgtracker at http://127.0.0.1:$port (Ctrl-C to stop)"
-  "${KUBECTL[@]}" port-forward --address 127.0.0.1 service/mtgtracker "$port:80"
+  # port-forward exits whenever the pod is replaced (e.g. by `up`), so
+  # reconnect until interrupted.
+  trap 'exit 0' INT TERM
+  while true; do
+    "${KUBECTL[@]}" port-forward --address 127.0.0.1 service/mtgtracker "$port:80" || true
+    echo "port-forward dropped; reconnecting..." >&2
+    sleep 2
+  done
 }
 
 cmd_down() {
@@ -87,6 +120,7 @@ cmd_destroy() {
 case ${1:-} in
   up) cmd_up ;;
   load-db) shift; cmd_load_db "$@" ;;
+  pull-db) shift; cmd_pull_db "$@" ;;
   import) shift; cmd_import "$@" ;;
   forward) shift; cmd_forward "$@" ;;
   down) cmd_down ;;

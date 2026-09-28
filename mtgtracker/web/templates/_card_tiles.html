@@ -1,0 +1,51 @@
+{# Card tile grid. `mode` is "deck" (status relative to this deck) or "cards" (where the card is); details live in the hover panel. #}
+{% macro panel_json(c, mode) -%}
+{%- if mode == "deck" -%}
+  {%- set where = "In this deck" if c.equipped else ("Lent to " ~ c.current_deck_name if c.current_deck_id is not none else "Not in any deck") -%}
+{%- else -%}
+  {%- set where = (c.disposition_type | capitalize) if c.disposition_type else (c.current_deck_name or "Not in any deck") -%}
+{%- endif -%}
+{{ {
+  "name": c.card_name,
+  "image": c.art.image,
+  "exact": c.art.exact,
+  "faces": c.art.faces | list,
+  "rarity": c.art.rarity,
+  "set_name": c.art.set_name,
+  "artist": c.art.artist,
+  "printing": (c.set_code | upper ~ " #" ~ c.collector_number) if c.set_code else none,
+  "finish": c.finish,
+  "qty": c.qty,
+  "where": where,
+  "cost": c.cost_cents | money,
+} | tojson }}
+{%- endmacro %}
+
+{% macro tile(c, mode) %}
+{#- Greyed out = not physically here: on a deck page, a card lent to another
+    deck (or in none); on the cards page, one that's been sold/traded/lost.
+    Where it actually is shows in the hover panel. -#}
+{%- set away = (not c.equipped) if mode == "deck" else c.disposition_type -%}
+<figure class="tile{% if c.finish != 'nonfoil' %} foil{% endif %}{% if away %} away{% endif %}" data-card='{{ panel_json(c, mode) }}' tabindex="0">
+  <div class="tile-art">
+    {% if c.art.image %}
+      <img src="{{ c.art.image }}" alt="{{ c.card_name }}" loading="lazy" referrerpolicy="no-referrer">
+    {% else %}
+      <div class="tile-placeholder"><span>{{ c.card_name }}</span></div>
+    {% endif %}
+    {% if c.qty > 1 %}<span class="tile-qty">{{ c.qty }}×</span>{% endif %}
+    {% if c.finish != "nonfoil" %}<span class="tile-finish">{{ c.finish }}</span>{% endif %}
+    {% if not c.set_code and c.card_name not in basic_names %}
+      <a class="tile-flag" href="/printings/{{ c.lot_id }}">needs printing</a>
+    {% endif %}
+  </div>
+  <figcaption class="visually-hidden">{{ c.card_name }}{% if away %} (not here){% endif %}</figcaption>
+</figure>
+{% endmacro %}
+
+{% macro view_toggle(view, base_url) %}
+<nav class="view-toggle" aria-label="View">
+  <a href="{{ base_url }}" {% if view != "list" %}aria-current="page"{% endif %}>Images</a>
+  <a href="{{ base_url }}{{ '&' if '?' in base_url else '?' }}view=list" {% if view == "list" %}aria-current="page"{% endif %}>List</a>
+</nav>
+{% endmacro %}

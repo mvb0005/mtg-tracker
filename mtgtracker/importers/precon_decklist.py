@@ -101,7 +101,9 @@ def create_deck_from_seed(
     not-found, and basics all get a lot -- only scryfall_id/set/collector
     differ), each equipped in the new deck. Returns the deck id.
     """
-    deck_id = create_deck(conn, seed["deck_name"], acquired_date, format=seed["format"])
+    deck_id = create_deck(
+        conn, seed["deck_name"], acquired_date, format=seed["format"], commander=seed["commander"]
+    )
 
     def _add_lot(card_name: str, scryfall_id: str | None, set_code: str | None,
                  collector_number: str | None, finish: str) -> None:

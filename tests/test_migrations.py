@@ -71,3 +71,23 @@ def test_one_equipped_per_lot_is_enforced():
         raised = True
 
     assert raised, "equipping the same lot in two decks at once should be rejected"
+
+
+def test_commander_migration_backfills_seeded_precons():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    first = sorted(db.MIGRATIONS_DIR.glob("*.sql"))[0]
+    conn.executescript(first.read_text())
+    conn.execute("PRAGMA user_version = 1")
+    for name in ("Reign of Dragons", "Keen Engineering", "Blue Pile"):
+        conn.execute(
+            "INSERT INTO decks (name, format, created_at) VALUES (?, 'Commander', '2026-09-27')", (name,)
+        )
+
+    assert db.migrate(conn) >= 2
+    commanders = dict(conn.execute("SELECT name, commander FROM decks").fetchall())
+    assert commanders == {
+        "Reign of Dragons": "Lathliss, Dragon Queen",
+        "Keen Engineering": "Sai, Master Thopterist",
+        "Blue Pile": None,
+    }
