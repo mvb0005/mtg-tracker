@@ -40,9 +40,11 @@ def import_order(
     else:
         typer.echo(f"No-op: transaction {result.transaction_id} already up to date.")
 
-    if not result.created:
-        return
-
+    # Always attempt seeding, not just on a freshly created transaction:
+    # seed_precon_deck_for_product() is itself a no-op for products that
+    # already have lots, which makes a failed first attempt (e.g. a
+    # Scryfall fetch error after the transaction/receipt were already
+    # committed) recoverable just by re-running this command.
     products = conn.execute(
         "SELECT id, display_name FROM products WHERE transaction_id = ?",
         (result.transaction_id,),

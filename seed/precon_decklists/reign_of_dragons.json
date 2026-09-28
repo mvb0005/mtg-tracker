@@ -66,7 +66,7 @@
     "Unexpected Windfall",
     "Arcane Signet",
     "Commander's Sphere",
-    "Dragonstorm",
+    "Dragonstorm Globe",
     "Fire Diamond",
     "Hazoret's Monument",
     "Herald's Horn",
@@ -78,5 +78,5 @@
   "basics": {
     "Mountain": 32
   },
-  "notes": "Card names transcribed from the official Wizards decklist announcement page. Two entries ('Fire Diamond', 'Hazoret's Monument') were reconstructed after the page's text extraction merged/split them ('Globe of Fire Diamond' / 'Globe of Fire' + 'Diamond Hazoret's Monument') -- both names verified independently against Scryfall's fuzzy-name lookup. Total: 68 unique cards + 32 Mountain = 100."
+  "notes": "Card names transcribed from the official Wizards decklist announcement page. Three entries ('Dragonstorm Globe', 'Fire Diamond', 'Hazoret's Monument') were reconstructed after the page's text extraction merged/split them across fetches ('Globe of Fire Diamond' in one pass, 'Globe of Fire' + 'Diamond Hazoret's Monument' in another) -- all three verified against the cached fdc set list, not guessed. Total: 68 unique cards + 32 Mountain = 100."
 }

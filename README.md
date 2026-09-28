@@ -4,9 +4,6 @@ Personal Magic: The Gathering collection and spending tracker. Local-first,
 single-user SQLite database — the source of truth for money and ownership,
 not a deckbuilder (that's Moxfield/Archidekt) or a scanner (that's ManaBox).
 
-See `/home/mvb/.claude/plans/sequential-frolicking-grove.md` for the full
-design writeup (data model, schema, and the reasoning behind it).
-
 ## Setup
 
 ```
@@ -55,16 +52,12 @@ Importing the two Foundations Commander precons (`mtg import-order`)
 surfaces a few cards Scryfall can't resolve to a single printing without
 the physical box in hand:
 
-- **Sol Ring** and **Arcane Signet** each have two `fdc`-set printings (an
-  original-wave foil-only version and a newer nonfoil/foil version) — one
-  lot per copy was created with `scryfall_id` left `NULL` rather than
-  guessed.
-- **Dragonstorm** (in Reign of Dragons) has no `fdc` printing at all — the
-  physical copy in the box must be a reprint from elsewhere, so its lot
-  also has `scryfall_id = NULL`.
+- **Sol Ring** and **Arcane Signet** each have two `fdc`-set printings, and
+  nothing in the published decklist says which one shipped in this box —
+  each got a lot with `scryfall_id` left `NULL` rather than guessed. Check
+  the physical cards and fill these in by hand if you want them pinned down.
 - Basic lands (32 Mountain, 34 Island) are never resolved to a specific art
   — there's no way to know which printing shipped in the box.
 
 None of this blocks cost allocation (it's by count, not by card), only
-future Scryfall-id-dependent features. Re-run resolution later if you want
-to pin these down by hand.
+future Scryfall-id-dependent features.

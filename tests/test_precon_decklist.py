@@ -1,11 +1,30 @@
+import json
+import shutil
 import sqlite3
+from pathlib import Path
 
-from mtgtracker import db
+import pytest
+
+from mtgtracker import db, scryfall
 from mtgtracker.importers.precon_decklist import (
     load_seed_decklists,
     resolve_decklist,
     seed_precon_deck_for_product,
 )
+
+FIXTURE_SET_DATA = Path(__file__).parent / "fixtures" / "scryfall_fdc.json"
+
+
+@pytest.fixture(autouse=True)
+def fixture_scryfall_cache(tmp_path, monkeypatch):
+    """Point scryfall.py at a committed, trimmed fdc fixture instead of the
+    gitignored local cache or the network, so these tests work on a fresh
+    clone with no Scryfall access."""
+    cache_dir = tmp_path / "scryfall_cache"
+    cache_dir.mkdir()
+    shutil.copy(FIXTURE_SET_DATA, cache_dir / "fdc.json")
+    monkeypatch.setattr(scryfall, "CACHE_DIR", cache_dir)
+    yield cache_dir
 
 
 def _make_conn():
@@ -45,22 +64,41 @@ def test_resolve_decklist_against_cached_fdc_set():
     seeds = {s["deck_name"]: s for s in load_seed_decklists()}
     report = resolve_decklist(seeds["Reign of Dragons"])
 
-    # Sol Ring and Arcane Signet each have two fdc printings (an
-    # original-wave foil-only version and a newer nonfoil/foil version)
-    # with nothing in the decklist text saying which shipped in this box --
-    # these must come back ambiguous, not guessed.
+    # Sol Ring and Arcane Signet each have two fdc printings, with nothing
+    # in the decklist text saying which one shipped in this box -- these
+    # must come back ambiguous, not guessed.
     ambiguous_names = {a["name"] for a in report.ambiguous}
     assert {"Sol Ring", "Arcane Signet"} <= ambiguous_names
 
-    # Not every card in the box necessarily got a fresh fdc-set reprint --
-    # e.g. "Dragonstorm" has no fdc printing at all, only reprints in other
-    # sets, so it can't be resolved to an exact printing without the
-    # physical card. It must show up as not-found, not guessed at.
-    assert "Dragonstorm" in report.not_found
+    assert report.not_found == []
     assert report.basics_unresolved == ["Mountain"]
 
     total_accounted = len(report.resolved) + len(report.ambiguous) + len(report.not_found)
     assert total_accounted == 68  # non-basic card count in the seed file
+
+
+def test_resolved_cards_stay_within_commander_color_identity():
+    # The only check that validates the bulk of the transcription: a
+    # 100-card count can't tell "Dragonstorm Globe" apart from a typo, but
+    # a card outside the commander's color identity would make the deck
+    # Commander-illegal, which means a transcription error.
+    cards = json.loads(FIXTURE_SET_DATA.read_text())
+    by_id = {c["id"]: c for c in cards}
+
+    for deck_name, commander_colors in (
+        ("Reign of Dragons", {"R"}),
+        ("Keen Engineering", {"U"}),
+    ):
+        seed = next(s for s in load_seed_decklists() if s["deck_name"] == deck_name)
+        report = resolve_decklist(seed)
+        for entry in report.resolved:
+            card = by_id[entry["scryfall_id"]]
+            identity = set(card.get("color_identity", []))
+            assert identity <= commander_colors, (
+                f"{entry['name']} has color identity {identity}, "
+                f"outside {commander_colors} for {deck_name} -- likely a "
+                "transcription error"
+            )
 
 
 def test_seed_precon_deck_creates_100_lots_all_equipped_and_allocated():

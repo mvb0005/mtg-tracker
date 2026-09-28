@@ -3,13 +3,14 @@ Scryfall, then create the deck, its lots, and their deck_cards rows.
 
 Resolution is honest, not guessed: a card name that matches exactly one
 printing in the deck's set is resolved; a name matching more than one
-printing is left unresolved and reported as ambiguous (e.g. Sol Ring and
-Arcane Signet each have two fdc printings -- an original-wave foil-only
-version and a newer nonfoil/foil version -- and nothing in the decklist
-text says which one shipped in this box); a name matching none is reported
-as not-found. Basic lands are never resolved to a specific printing (a set
-can have several land arts and there's no way to know which is in the box)
--- they're reported once per basic type, not once per copy.
+printing is left unresolved and reported as ambiguous with every
+candidate's set/collector number and finishes (e.g. Sol Ring and Arcane
+Signet each have two fdc printings and nothing in the decklist text says
+which one shipped in this box -- which one it actually is is for the user
+to say, not to infer); a name matching none is reported as not-found.
+Basic lands are never resolved to a specific printing (a set can have
+several land arts and there's no way to know which is in the box) -- they're
+reported once per basic type, not once per copy.
 
 Unresolved cards still get lots (card_name only, scryfall_id NULL) so nothing
 blocks deck creation or cost allocation, which only need a card count.
@@ -149,6 +150,12 @@ def seed_precon_deck_for_product(
     ).fetchone()
     if product is None:
         raise ValueError(f"no product with id {product_id}")
+
+    existing_lots = conn.execute(
+        "SELECT COUNT(*) FROM lots WHERE product_id = ?", (product_id,)
+    ).fetchone()[0]
+    if existing_lots > 0:
+        return None  # already seeded (or has lots from elsewhere) -- don't duplicate
 
     txn = conn.execute(
         "SELECT created_at FROM transactions WHERE id = ?", (product["transaction_id"],)
