@@ -1,0 +1,21 @@
+<div class="table-wrap">
+{% if transactions %}
+<table>
+  <thead><tr><th>Date</th><th>Vendor</th><th>Order</th><th>Status</th><th class="num">Items</th><th class="num">Total</th></tr></thead>
+  <tbody>
+  {% for txn in transactions %}
+    <tr>
+      <td>{{ txn.created_at[:10] }}</td>
+      <td class="name"><a href="/transactions/{{ txn.id }}">{{ txn.vendor }}</a></td>
+      <td>{{ txn.order_number or "—" }}</td>
+      <td>{{ txn.status or "—" }}</td>
+      <td class="num">{{ txn.product_count }}</td>
+      <td class="num">{{ txn.total_cents | money(txn.currency) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No purchases yet. Import one with <code>mtg import-order</code>.</p>
+{% endif %}
+</div>

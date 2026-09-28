@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -99,6 +100,25 @@ def reassemble_deck(
     for row in missing:
         where = row["current_deck_id"] if row["current_deck_id"] is not None else "nowhere (unassigned)"
         typer.echo(f"{row['card_name']}: currently in deck {where}")
+
+
+@app.command()
+def serve(
+    db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db", help="SQLite database path"),
+    host: str = typer.Option("127.0.0.1", help="Bind address (local-only by default)"),
+    port: int = typer.Option(8000, help="Port"),
+    reload: bool = typer.Option(False, help="Reload on code changes (development)"),
+):
+    """Serve the read-only web UI."""
+    import uvicorn
+
+    if reload:
+        os.environ["MTGTRACKER_DB"] = str(db_path)
+        uvicorn.run("mtgtracker.web.app:app_from_env", factory=True, host=host, port=port, reload=True)
+    else:
+        from mtgtracker.web.app import create_app
+
+        uvicorn.run(create_app(db_path), host=host, port=port)
 
 
 if __name__ == "__main__":

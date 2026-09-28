@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% set active = "cards" %}
+{% block title %}Cards{% endblock %}
+{% block content %}
+<h1>Cards</h1>
+<form class="search" method="get" action="/cards">
+  <input type="search" name="q" value="{{ q }}" placeholder="Filter by card name" aria-label="Filter by card name">
+  <button type="submit">Search</button>
+</form>
+<div class="table-wrap">
+{% if cards %}
+<table>
+  <thead><tr><th class="num">Qty</th><th>Card</th><th>Printing</th><th>Finish</th><th>Where</th><th class="num">Cost basis</th></tr></thead>
+  <tbody>
+  {% for c in cards %}
+    <tr>
+      <td class="num">{{ c.qty }}</td>
+      <td class="name">{{ c.card_name }}</td>
+      <td>{% if c.set_code %}{{ c.set_code | upper }} #{{ c.collector_number }}{% else %}<span class="subtle">—</span>{% endif %}</td>
+      <td>{{ c.finish }}</td>
+      <td>
+        {% if c.disposition_type %}<span class="tag">{{ c.disposition_type }}</span>
+        {% elif c.current_deck_id is not none %}<a href="/decks/{{ c.current_deck_id }}">{{ c.current_deck_name }}</a>
+        {% else %}<span class="subtle">unassigned</span>{% endif %}
+      </td>
+      <td class="num">{{ c.cost_cents | money }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">{% if q %}No cards match "{{ q }}".{% else %}No cards yet.{% endif %}</p>
+{% endif %}
+</div>
+{% endblock %}

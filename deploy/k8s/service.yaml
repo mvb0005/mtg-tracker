@@ -1,0 +1,13 @@
+# ClusterIP only -- reach it with `deploy/minikube.sh forward`. No NodePort or
+# Ingress: this is a single-user, local-only app.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mtgtracker
+spec:
+  selector:
+    app: mtgtracker
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

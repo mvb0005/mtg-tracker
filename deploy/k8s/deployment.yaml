@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mtgtracker
+  labels:
+    app: mtgtracker
+spec:
+  # SQLite on a ReadWriteOnce volume: exactly one pod, and never two at once
+  # during a rollout.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: mtgtracker
+  template:
+    metadata:
+      labels:
+        app: mtgtracker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: web
+          image: mtgtracker:dev
+          imagePullPolicy: Never  # built straight into minikube's runtime
+          command:
+            - mtg
+            - serve
+            - --db
+            - /data/mtgtracker.db
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+          ports:
+            - name: http
+              containerPort: 8000
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: data
+              mountPath: /app/.scryfall_cache
+              subPath: scryfall_cache
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mtgtracker-data
+        - name: tmp
+          emptyDir: {}

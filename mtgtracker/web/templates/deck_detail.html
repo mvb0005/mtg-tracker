@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% set active = "decks" %}
+{% block title %}{{ deck.name }}{% endblock %}
+{% block content %}
+<p><a href="/decks">← Decks</a></p>
+<h1>{{ deck.name }}</h1>
+<p class="subtle">{{ deck.format }} · created {{ deck.created_at[:10] }}</p>
+
+<div class="stats">
+  <div class="stat"><div class="label">On list</div><div class="value">{{ list_count }}</div></div>
+  <div class="stat"><div class="label">Equipped here</div><div class="value">{{ equipped_count }}</div></div>
+  <div class="stat"><div class="label">List cost basis</div><div class="value">{{ list_cost_cents | money }}</div></div>
+</div>
+<p class="subtle">List cost basis sums every card on this deck's list, including cards currently lent to other decks. A card that's on more than one list counts toward each deck.</p>
+
+<h2>Reassemble</h2>
+{% if missing %}
+<p>Pull these {{ missing | length }} card{{ "s" if missing | length != 1 }} back to reassemble the list:</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Card</th><th>Currently in</th></tr></thead>
+  <tbody>
+  {% for row in missing %}
+    <tr>
+      <td class="name">{{ row.card_name }}</td>
+      <td>{% if row.current_deck_id is not none %}<a href="/decks/{{ row.current_deck_id }}">{{ deck_names[row.current_deck_id] }}</a>{% else %}<span class="subtle">unassigned</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p><span class="tag ok">assembled</span> Every card on the list is in the deck.</p>
+{% endif %}
+
+<h2>Decklist</h2>
+<div class="table-wrap">
+{% if groups %}
+<table>
+  <thead><tr><th class="num">Qty</th><th>Card</th><th>Printing</th><th>Finish</th><th>Where</th><th class="num">Cost basis</th></tr></thead>
+  <tbody>
+  {% for g in groups %}
+    <tr>
+      <td class="num">{{ g.qty }}</td>
+      <td class="name">{{ g.card_name }}{% if g.needs_input %} <span class="tag warn">needs printing</span>{% endif %}</td>
+      <td>{% if g.set_code %}{{ g.set_code | upper }} #{{ g.collector_number }}{% else %}<span class="subtle">—</span>{% endif %}</td>
+      <td>{{ g.finish }}</td>
+      <td>
+        {% if g.equipped %}<span class="tag ok">here</span>
+        {% elif g.current_deck_id is not none %}<span class="tag away">in <a href="/decks/{{ g.current_deck_id }}">{{ g.current_deck_name }}</a></span>
+        {% else %}<span class="tag">unassigned</span>{% endif %}
+      </td>
+      <td class="num">{{ g.cost_cents | money }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">This deck's list is empty.</p>
+{% endif %}
+</div>
+{% endblock %}

@@ -6,6 +6,9 @@ requires-python = ">=3.12"
 dependencies = [
     "typer>=0.12",
     "httpx>=0.27",
+    "fastapi>=0.110",
+    "jinja2>=3.1",
+    "uvicorn>=0.29",
 ]
 
 [project.scripts]
@@ -25,6 +28,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["mtgtracker*"]
 
+[tool.setuptools.package-data]
+mtgtracker = ["migrations/*.sql", "web/templates/*.html", "web/static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
@@ -39,5 +45,5 @@ extend-exclude = [".scryfall_cache"]
 select = ["E", "F", "I", "B", "UP", "SIM", "C4", "PT", "RUF"]
 
 [tool.ruff.lint.flake8-bugbear]
-# typer's documented idiom is typer.Argument/Option as parameter defaults.
-extend-immutable-calls = ["typer.Argument", "typer.Option"]
+# typer/FastAPI's documented idiom is Argument/Option/Depends as parameter defaults.
+extend-immutable-calls = ["typer.Argument", "typer.Option", "fastapi.Depends"]

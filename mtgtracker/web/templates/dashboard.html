@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% set active = "dashboard" %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+<h1>Overview</h1>
+<div class="stats">
+  <div class="stat"><div class="label">Total spent</div><div class="value">{{ stats.total_spent_cents | money }}</div></div>
+  <div class="stat"><div class="label">Cards owned</div><div class="value">{{ "{:,}".format(stats.card_count) }}</div></div>
+  <div class="stat"><div class="label">Decks</div><div class="value">{{ stats.deck_count }}</div></div>
+  <div class="stat"><div class="label">Purchases</div><div class="value">{{ stats.transaction_count }}</div></div>
+</div>
+
+{% include "_needs_input.html" %}
+
+<h2>Decks</h2>
+{% include "_deck_table.html" %}
+
+<h2>Recent purchases</h2>
+{% include "_transaction_table.html" %}
+{% endblock %}

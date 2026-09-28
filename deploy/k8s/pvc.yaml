@@ -1,0 +1,10 @@
+# Holds the SQLite database, stored receipts and the Scryfall set cache.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mtgtracker-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% set active = "transactions" %}
+{% block title %}{{ txn.vendor }} {{ txn.order_number or "" }}{% endblock %}
+{% block content %}
+<p><a href="/transactions">← Purchases</a></p>
+<h1>{{ txn.vendor }}{% if txn.order_number %} <span class="subtle">#{{ txn.order_number }}</span>{% endif %}</h1>
+<dl class="meta">
+  <dt>Date</dt><dd>{{ txn.created_at[:10] }}</dd>
+  <dt>Status</dt><dd>{{ txn.status or "—" }}</dd>
+  <dt>Payment</dt><dd>{{ txn.payment_method or "—" }}</dd>
+  <dt>Source</dt><dd>{{ txn.source }}</dd>
+</dl>
+
+<h2>Products</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Product</th><th>SKU</th><th class="num">Qty</th><th class="num">Subtotal</th><th class="num">Tax + shipping</th><th class="num">Cost basis</th><th class="num">Cards</th></tr></thead>
+  <tbody>
+  {% for p in products %}
+    <tr>
+      <td class="name">{{ p.display_name }}{% if p.product_type %} <span class="tag">{{ p.product_type }}</span>{% endif %}</td>
+      <td>{{ p.sku or "—" }}</td>
+      <td class="num">{{ p.qty }}</td>
+      <td class="num">{{ p.line_subtotal_cents | money(txn.currency) }}</td>
+      <td class="num">{{ p.tax_allocated_cents | money(txn.currency) }}</td>
+      <td class="num">{{ p.cost_basis_cents | money(txn.currency) }}</td>
+      <td class="num">{{ p.lot_count }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr><td colspan="3">Subtotal</td><td class="num">{{ txn.subtotal_cents | money(txn.currency) }}</td><td colspan="3"></td></tr>
+    <tr><td colspan="3">Tax</td><td class="num">{{ txn.tax_cents | money(txn.currency) }}</td><td colspan="3"></td></tr>
+    {% if txn.shipping_cents %}<tr><td colspan="3">Shipping</td><td class="num">{{ txn.shipping_cents | money(txn.currency) }}</td><td colspan="3"></td></tr>{% endif %}
+    <tr><td colspan="3">Total</td><td class="num">{{ txn.total_cents | money(txn.currency) }}</td><td colspan="3"></td></tr>
+  </tfoot>
+</table>
+</div>
+
+<h2>Receipts</h2>
+{% if receipts %}
+<ul>
+  {% for r in receipts %}<li>{{ r.original_filename }} <span class="subtle">({{ r.kind }}, imported {{ r.imported_at[:10] }})</span></li>{% endfor %}
+</ul>
+{% else %}
+<p class="subtle">None on file.</p>
+{% endif %}
+{% endblock %}

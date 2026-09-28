@@ -1,0 +1,16 @@
+# Real receipts (credentials/PII) and the live database must never end up in
+# an image. Data reaches the cluster only via deploy/minikube.sh load-db.
+data/
+receipts/
+.claude/
+.git/
+.venv/
+venv/
+.scryfall_cache/
+.pytest_cache/
+.cache/
+*.egg-info/
+**/__pycache__/
+*.pyc
+# Not needed at runtime (and the fixture still carries a card last-4).
+tests/

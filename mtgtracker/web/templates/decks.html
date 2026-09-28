@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% set active = "decks" %}
+{% block title %}Decks{% endblock %}
+{% block content %}
+<h1>Decks</h1>
+<p class="subtle">"On list" counts every card on the deck's list. "Equipped" counts the ones physically in the deck right now.</p>
+{% include "_deck_table.html" %}
+{% endblock %}
