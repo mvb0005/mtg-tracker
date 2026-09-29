@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 
-from mtgtracker import commanders, db, printings, scryfall
+from mtgtracker import cardinfo, commanders, db, deckmods, printings, scryfall
 from mtgtracker.cardinfo import BASIC_LAND_NAMES, SECTION_ORDER
 from mtgtracker.web import filters, queries
 
@@ -223,6 +223,164 @@ def create_app(db_path: str | Path) -> FastAPI:
             deck_options={**{str(d["id"]): d["name"] for d in decks}, filters.NO_DECK: "Not in a deck"},
             facets=card_filters.facet_counts(copies),
             total=queries.count_cards(conn), shown=sum(r["qty"] for r in card_rows),
+        )
+
+    # --- deck modifications & versions ---------------------------------------
+
+    def modify_page(
+        request: Request, conn: sqlite3.Connection, deck_id: int,
+        *, q: str = "", notice: str = "", error: str = "", status_code: int = 200,
+    ) -> HTMLResponse:
+        deck = conn.execute("SELECT * FROM decks WHERE id = ?", (deck_id,)).fetchone()
+        if deck is None:
+            raise HTTPException(status_code=404, detail="No such deck")
+        # Display rows (same shape as the deck page's) so changes, the
+        # replacement picker and search results render as readable card
+        # tiles with the shared hover panel / tap sheet.
+        groups = queries.get_deck(conn, deck_id)["groups"]
+        by_name: dict[str, dict] = {}
+        for group in groups:
+            by_name.setdefault(group["card_name"], group)
+
+        pending = deckmods.pending_changes(conn, deck_id)
+        for change in pending:
+            art = cardinfo.lookup(change["add_scryfall_id"], change["add_card_name"],
+                                  change["add_finish"] or "nonfoil")
+            if not change["ready"]:
+                where = "Not owned yet (to buy)"
+            elif change["add_from_deck_name"]:
+                where = f"In {change['add_from_deck_name']} (would be borrowed)"
+            else:
+                where = "In your collection, not in a deck"
+            change["insert_row"] = {
+                "card_name": change["add_card_name"], "art": art, "qty": 1,
+                "finish": change["add_finish"] or "nonfoil", "set_code": change["add_set_code"],
+                "collector_number": change["add_collector_number"], "cost_cents": change["add_cost_cents"],
+                "where": where, "decks": [], "disposition_type": None,
+            }
+            if not change["ready"]:
+                change["insert_row"]["printing"] = "Not owned yet"
+            cut = by_name.get(change["cut_card_name"]) if change["cut_card_name"] else None
+            change["cut_row"] = {**cut, "qty": 1} if cut else None
+            change["owned_copies"] = (
+                [] if change["ready"] else deckmods.owned_copies_of(conn, deck_id, change["add_card_name"])
+            )
+
+        cut_choices = []
+        for option in deckmods.cut_options(conn, deck_id):
+            row = by_name.get(option["card_name"])
+            if row:
+                cut_choices.append({**row, "cut_lot_id": option["lot_id"], "qty": option["qty"]})
+        cut_choices.sort(key=lambda r: cardinfo.mana_value_order(r["card_name"], r["art"]))
+
+        ready = [c for c in pending if c["ready"]]
+        size = deckmods.list_size(conn, deck_id)
+        candidates = deckmods.owned_candidates(conn, deck_id, q)
+        for candidate in candidates:
+            candidate.update(
+                art=cardinfo.lookup(candidate["scryfall_id"], candidate["card_name"], candidate["finish"]),
+                where=(f"{candidate['qty']} in {candidate['holder_name']}" if candidate["holder_name"]
+                       else f"{candidate['qty']} not in a deck"),
+                decks=[], disposition_type=None, cost_cents=None,
+            )
+        return render(
+            request, "deck_modify.html", status_code=status_code,
+            deck=deck, pending=pending, ready_count=len(ready),
+            size=size, size_after=size + len(ready) - sum(1 for c in ready if c["cut_lot_id"]),
+            cut_options=deckmods.cut_options(conn, deck_id),
+            cut_sections=queries.sections_by_type(cut_choices),
+            candidates=candidates, q=q,
+            versions=deckmods.versions(conn, deck_id),
+            notice=notice, error=error,
+        )
+
+    @app.get("/decks/{deck_id}/modify", response_class=HTMLResponse)
+    def deck_modify(
+        deck_id: int, request: Request, q: str = "", notice: str = "", error: str = "",
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        return modify_page(request, conn, deck_id, q=q, notice=notice, error=error)
+
+    def change_action(deck_id: int, conn: sqlite3.Connection, action, notice: str, q: str = ""):
+        """Run a deck_changes edit; redirect back to the modify page with a
+        notice, or with the error if it was rejected."""
+        if conn.execute("SELECT 1 FROM decks WHERE id = ?", (deck_id,)).fetchone() is None:
+            raise HTTPException(status_code=404, detail="No such deck")
+        try:
+            result = action()
+        except deckmods.ChangeError as exc:
+            return redirect(f"/decks/{deck_id}/modify", error=str(exc), q=q)
+        except httpx.HTTPError:
+            return redirect(f"/decks/{deck_id}/modify", error="Couldn't reach Scryfall", q=q)
+        return redirect(f"/decks/{deck_id}/modify", notice=notice.format(result=result), q=q)
+
+    def form_int(value) -> int | None:
+        value = str(value or "").strip()
+        return int(value) if value.isdigit() else None
+
+    @app.post("/decks/{deck_id}/changes")
+    async def deck_add_change(deck_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+        form = await request.form()
+        q = str(form.get("q", ""))
+        lot_id = form_int(form.get("lot_id"))
+        if lot_id is not None:
+            return change_action(deck_id, conn, lambda: deckmods.add_owned(conn, deck_id, lot_id),
+                                 "Added to the change list.", q)
+        name = str(form.get("planned_name", ""))
+        return change_action(deck_id, conn, lambda: deckmods.add_planned(conn, deck_id, name),
+                             "Added to the change list as planned (to buy).", q)
+
+    @app.post("/decks/{deck_id}/import")
+    async def deck_import_list(deck_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+        text = str((await request.form()).get("decklist", ""))
+        if len(text) > 50_000:
+            return redirect(f"/decks/{deck_id}/modify", error="That list is too long")
+        return change_action(deck_id, conn, lambda: deckmods.import_list(conn, deck_id, text).message(),
+                             "{result}")
+
+    @app.post("/decks/{deck_id}/changes/{change_id}/cut")
+    async def deck_change_cut(
+        deck_id: int, change_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+    ):
+        cut = form_int((await request.form()).get("cut_lot_id"))
+        return change_action(deck_id, conn, lambda: deckmods.set_cut(conn, deck_id, change_id, cut),
+                             "Replacement updated.")
+
+    @app.post("/decks/{deck_id}/changes/{change_id}/link")
+    async def deck_change_link(
+        deck_id: int, change_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+    ):
+        lot_id = form_int((await request.form()).get("lot_id"))
+        if lot_id is None:
+            return redirect(f"/decks/{deck_id}/modify", error="Pick a copy to use")
+        return change_action(deck_id, conn, lambda: deckmods.link_owned(conn, deck_id, change_id, lot_id),
+                             "Linked your copy; the change is ready.")
+
+    @app.post("/decks/{deck_id}/changes/{change_id}/delete")
+    def deck_change_delete(deck_id: int, change_id: int, conn: sqlite3.Connection = Depends(get_conn)):
+        return change_action(deck_id, conn, lambda: deckmods.remove_change(conn, deck_id, change_id),
+                             "Removed from the change list.")
+
+    @app.post("/decks/{deck_id}/apply")
+    async def deck_apply(deck_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+        note = str((await request.form()).get("note", ""))
+        return change_action(deck_id, conn, lambda: deckmods.apply_changes(conn, deck_id, note),
+                             "Applied as version {result}.")
+
+    @app.get("/decks/{deck_id}/versions/{version}", response_class=HTMLResponse)
+    def deck_version(
+        deck_id: int, version: int, request: Request, view: str = "",
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        deck = conn.execute("SELECT * FROM decks WHERE id = ?", (deck_id,)).fetchone()
+        lot_ids = deckmods.version_lot_ids(conn, deck_id, version) if deck else None
+        if lot_ids is None:
+            raise HTTPException(status_code=404, detail="No such deck version")
+        rows = queries.lots_as_rows(conn, lot_ids, where=f"On the v{version} list")
+        info = next(v for v in deckmods.versions(conn, deck_id) if v["version"] == version)
+        return render(
+            request, "deck_version.html", deck=deck, version=info,
+            sections=queries.sections_by_type(rows), total=sum(r["qty"] for r in rows),
         )
 
     @app.get("/printings", response_class=HTMLResponse)

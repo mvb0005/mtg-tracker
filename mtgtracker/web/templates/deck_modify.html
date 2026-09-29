@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% set active = "decks" %}
+{% block title %}Modify {{ deck.name }}{% endblock %}
+{% import "_card_tiles.html" as cards with context %}
+{% block body_class %}with-panel{% endblock %}
+{% block panel %}{% include "_card_panel.html" %}{% endblock %}
+{% block content %}
+<p><a href="/decks/{{ deck.id }}">← {{ deck.name }}</a></p>
+<h1>Modify {{ deck.name }} <span class="subtle">v{{ deck.version }}</span></h1>
+<p class="subtle">Queue cards to insert and pick what each one replaces, then apply them together as the next version. Replaced cards go back to your collection.</p>
+{% include "_flash.html" %}
+
+<h2>Change list</h2>
+{% if pending %}
+{% set planned_count = pending | rejectattr("ready") | list | length %}
+<ul class="changes">
+  {% for c in pending %}
+  <li class="change{% if not c.ready %} planned{% endif %}" id="change-{{ c.id }}">
+    <div class="change-cards">
+      <div class="change-slot">
+        <div class="change-slot-label">Add</div>
+        {{ cards.card_face(c.insert_row, "cards") }}
+      </div>
+      <div class="change-arrow" aria-hidden="true">→</div>
+      <div class="change-slot">
+        <div class="change-slot-label">Replaces</div>
+        {% if c.cut_row %}
+          {{ cards.card_face(c.cut_row, "deck") }}
+        {% else %}
+          <div class="tile"><div class="tile-art"><div class="tile-placeholder empty-slot"><span>Nothing<br><small>(just add it)</small></span></div></div></div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="change-body">
+      <div class="change-title">
+        <strong>{{ c.add_card_name }}</strong>
+        {% if not c.ready %}<span class="tag warn">to buy</span>
+        {% elif c.add_from_deck_id is not none %}<span class="tag away">takes it from {{ c.add_from_deck_name }}</span>
+        {% else %}<span class="tag">from your collection</span>{% endif %}
+      </div>
+      {% if c.ready and c.add_from_deck_id is not none %}
+      <p class="subtle change-hint">It stays on the {{ c.add_from_deck_name }} list, so reassembling that deck will ask for it back.</p>
+      {% endif %}
+      {% if c.cut_card_name and c.cut_card_name == deck.commander %}
+      <p class="subtle change-hint">This replaces the commander; the deck will have no commander until you choose one.</p>
+      {% endif %}
+      <div class="change-actions">
+        <button type="button" class="pick-button" data-pick-cut="/decks/{{ deck.id }}/changes/{{ c.id }}/cut"
+                data-pick-title="{{ c.add_card_name }} replaces…" aria-controls="cut-picker" aria-expanded="false" hidden>
+          {{ "Change replacement" if c.cut_row else "Choose a card to replace" }}
+        </button>
+        <noscript>
+          <form class="change-cut" method="post" action="/decks/{{ deck.id }}/changes/{{ c.id }}/cut">
+            <label>Replaces
+              <select name="cut_lot_id">
+                <option value="">Nothing (just add it)</option>
+                {% if c.cut_lot_id %}<option value="{{ c.cut_lot_id }}" selected>{{ c.cut_card_name }}</option>{% endif %}
+                {% for o in cut_options %}<option value="{{ o.lot_id }}">{{ o.card_name }}</option>{% endfor %}
+              </select>
+            </label>
+            <button type="submit">Save</button>
+          </form>
+        </noscript>
+        <form method="post" action="/decks/{{ deck.id }}/changes/{{ c.id }}/delete">
+          <button type="submit" class="link-button">Remove</button>
+        </form>
+      </div>
+      {% if not c.ready %}
+        {% if c.owned_copies %}
+        <form class="change-link" method="post" action="/decks/{{ deck.id }}/changes/{{ c.id }}/link">
+          <label>Use your copy
+            <select name="lot_id">
+              {% for o in c.owned_copies %}<option value="{{ o.lot_id }}">{% if o.holder_name %}from {{ o.holder_name }}{% else %}not in a deck{% endif %}{% if o.qty > 1 %} ({{ o.qty }}){% endif %}</option>{% endfor %}
+            </select>
+          </label>
+          <button type="submit">Link</button>
+        </form>
+        {% else %}
+        <p class="subtle change-hint">You don't own a copy yet, so this stays pending when you apply.</p>
+        {% endif %}
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+
+  {#- One shared replacement picker, moved under whichever change opened it
+      (deck-modify.js). The deck's cards as readable tiles, grouped by type;
+      hover shows the details panel, click picks. -#}
+  <li id="cut-picker" class="cut-picker" hidden>
+    <form method="post">
+      <div class="cut-picker-head">
+        <strong class="cut-picker-title">Replaces…</strong>
+        <button type="submit" name="cut_lot_id" value="" class="pick-none">No replacement (just add it)</button>
+        <button type="button" class="link-button" data-picker-close>Cancel</button>
+      </div>
+      {% for label, rows, count in cut_sections %}
+      <h3>{{ label }} <span class="subtle">({{ count }})</span></h3>
+      <div class="tile-grid">
+        {% for r in rows %}
+        <button type="submit" name="cut_lot_id" value="{{ r.cut_lot_id }}" class="pick-tile" aria-label="Replace {{ r.card_name }}">
+          {{ cards.card_face(r, "deck") }}
+        </button>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </form>
+  </li>
+</ul>
+
+<form class="apply-bar" method="post" action="/decks/{{ deck.id }}/apply">
+  <p>
+    <strong>{{ ready_count }}</strong> ready change{{ "s" if ready_count != 1 }} → <strong>v{{ deck.version + 1 }}</strong>
+    · list {{ size }} → {{ size_after }} cards
+    {%- if planned_count %} · {{ planned_count }} planned stay{{ "s" if planned_count == 1 }} pending{% endif %}
+  </p>
+  <input type="text" name="note" maxlength="200" placeholder="Note (optional), e.g. “More ramp”" aria-label="Version note">
+  <button type="submit" class="primary"{% if not ready_count %} disabled{% endif %}>Apply as v{{ deck.version + 1 }}</button>
+</form>
+{% else %}
+<p class="subtle">No changes queued. Search for a card below, or import a list.</p>
+{% endif %}
+
+<h2>Add a card</h2>
+<form class="search" method="get" action="/decks/{{ deck.id }}/modify">
+  <input type="search" name="q" value="{{ q }}" placeholder="Card name" aria-label="Card name">
+  <button type="submit">Search</button>
+</form>
+{% if q %}
+  {% if candidates %}
+  <p class="subtle">Cards you own that aren't in this deck yet:</p>
+  <div class="tile-grid candidates">
+    {% for c in candidates %}
+    <div class="candidate">
+      {{ cards.card_face(c, "cards") }}
+      <div class="candidate-meta subtle">{{ c.where }}</div>
+      <form method="post" action="/decks/{{ deck.id }}/changes">
+        <input type="hidden" name="lot_id" value="{{ c.lot_id }}">
+        <input type="hidden" name="q" value="{{ q }}">
+        <button type="submit">Add to change list</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="subtle">You don't own any “{{ q }}” that isn't already in this deck.</p>
+  {% endif %}
+  <form class="plan-form" method="post" action="/decks/{{ deck.id }}/changes">
+    <input type="hidden" name="planned_name" value="{{ q }}">
+    <input type="hidden" name="q" value="{{ q }}">
+    <button type="submit">Plan to buy “{{ q }}”</button>
+    <span class="subtle">Looks the card up on Scryfall.</span>
+  </form>
+{% endif %}
+
+<h2>Import a list</h2>
+<form class="import-form" method="post" action="/decks/{{ deck.id }}/import">
+  <p class="subtle">Paste a decklist from Moxfield, Archidekt, Arena or similar: one card per line, e.g. “1 Sol Ring”. Cards already in the deck or already queued are skipped; cards you own are used first and the rest are queued to buy. Sideboard/maybeboard sections are ignored.</p>
+  <textarea name="decklist" rows="10" placeholder="1 Academy Ruins&#10;1 Expedition Map&#10;1 Mystic Forge" aria-label="Decklist"></textarea>
+  <button type="submit" class="primary">Queue these cards</button>
+</form>
+
+<h2>History</h2>
+{% if versions %}
+<ol class="versions" reversed>
+  {% for v in versions %}
+  <li>
+    <div><a href="/decks/{{ deck.id }}/versions/{{ v.version }}"><strong>v{{ v.version }}</strong></a>
+      <span class="subtle">· {{ v.created_at[:10] }} · {{ v.card_count }} cards{% if v.version == deck.version %} · current{% endif %}</span>
+      {% if v.note %}<span>· {{ v.note }}</span>{% endif %}</div>
+    {% if v.added or v.removed %}
+    <div class="diff">
+      {% for name, n in v.added %}<span class="diff-add">+{{ n }} {{ name }}</span>{% endfor %}
+      {% for name, n in v.removed %}<span class="diff-remove">−{{ n }} {{ name }}</span>{% endfor %}
+    </div>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<p class="subtle">No versions recorded yet. Applying changes records the first one.</p>
+{% endif %}
+<script src="{{ url_for('static', path='deck-modify.js') }}?v={{ static_version('deck-modify.js') }}" defer></script>
+{% endblock %}

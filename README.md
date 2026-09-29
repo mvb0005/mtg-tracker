@@ -62,6 +62,15 @@ separate from the local `data/mtgtracker.db`. Printings you pick in the UI and
 orders added with `import` land in the cluster copy. Run `pull-db` before
 `load-db`, because `load-db` replaces the cluster copy wholesale.
 
+## Modifying decks
+
+Each deck page links to **Modify deck** (`/decks/<id>/modify`):
+- **Queue inserts:** search your collection for cards to insert, or plan a card you don't own yet ("Plan to buy", looked up on Scryfall).
+- **Pick replacements:** choose which card on the list each insert replaces, if any.
+- **Apply:** the ready changes are applied together as the deck's next version. Replaced cards go back to your collection. Planned cards stay queued until you own a copy.
+- **History:** every version is kept, with what it added and removed, and you can view any past version's list.
+- **Import a list:** paste a plain-text decklist exported from Moxfield, Archidekt or Arena (`1 Sol Ring`, `1x Sol Ring`, `1 Sol Ring (CMM) 400 *F*`, with section headers) to queue every card at once. Names are matched on Scryfall in batches. Cards already in the deck or already queued are skipped. Cards you own are used first, preferring unassigned copies, and the rest are queued to buy. Sideboard and maybeboard sections are ignored.
+
 ## Tests and linting
 
 ```

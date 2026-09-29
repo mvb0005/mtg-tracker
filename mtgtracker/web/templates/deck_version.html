@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% set active = "decks" %}
+{% block title %}{{ deck.name }} v{{ version.version }}{% endblock %}
+{% import "_card_tiles.html" as cards with context %}
+{% block body_class %}with-panel{% endblock %}
+{% block panel %}{% include "_card_panel.html" %}{% endblock %}
+{% block content %}
+<p><a href="/decks/{{ deck.id }}/modify">← {{ deck.name }} history</a></p>
+<h1>{{ deck.name }} <span class="subtle">v{{ version.version }}</span></h1>
+<p class="subtle">
+  {{ version.created_at[:10] }} · {{ total }} cards
+  {%- if version.note %} · {{ version.note }}{% endif %}
+  {%- if version.version == deck.version %} · current version{% else %} · <a href="/decks/{{ deck.id }}">see the current list</a>{% endif %}
+</p>
+{% if version.added or version.removed %}
+<div class="diff">
+  {% for name, n in version.added %}<span class="diff-add">+{{ n }} {{ name }}</span>{% endfor %}
+  {% for name, n in version.removed %}<span class="diff-remove">−{{ n }} {{ name }}</span>{% endfor %}
+</div>
+{% endif %}
+{{ cards.list_columns(sections, "cards") }}
+{% endblock %}

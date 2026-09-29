@@ -4,9 +4,15 @@ from pathlib import Path
 import httpx
 import pytest
 
+# Imported at module load, before any test patches httpx.Client: TestClient
+# subclasses httpx.Client, so importing it after install_transport() would
+# route the app's own test requests through the fake transport.
+from fastapi.testclient import TestClient
+
 from mtgtracker import db, scryfall
 from mtgtracker.importers.order_wallet import import_order_file
 from mtgtracker.importers.precon_decklist import seed_precon_deck_for_product
+from mtgtracker.web.app import create_app
 
 FIXTURES = Path(__file__).parent / "fixtures"
 _REAL_HTTPX_CLIENT = httpx.Client  # captured before any test patches it
@@ -67,10 +73,6 @@ def cache_dir(tmp_path, monkeypatch):
 @pytest.fixture
 def client(db_path, cache_dir):
     """Web app over a copy of the seeded DB, with the fixture Scryfall cache."""
-    from fastapi.testclient import TestClient
-
-    from mtgtracker.web.app import create_app
-
     return TestClient(create_app(db_path))
 
 

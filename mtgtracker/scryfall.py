@@ -52,16 +52,84 @@ def fetch_set_cards(set_code: str, *, use_cache: bool = True) -> list[dict]:
     return cards
 
 
+class CardLookupError(Exception):
+    """A by-name lookup found no card, or the name matches several."""
+
+
+def fetch_named_card(name: str) -> dict:
+    """One card by (fuzzy) name via /cards/named -- an explicit user action,
+    e.g. planning a card you don't own. The result is cached as
+    CACHE_DIR/cards/<id>.json, a single card object, which cached_cards()
+    includes (so it gets an image and type) but which is never a "set" for
+    cached_set_codes(). Raises CardLookupError for no match or an ambiguous
+    name; other HTTP failures propagate as httpx errors."""
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    with httpx.Client(timeout=15) as client:
+        resp = client.get("https://api.scryfall.com/cards/named", params={"fuzzy": name}, headers=headers)
+    if resp.status_code == 404:
+        error = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        if error.get("type") == "ambiguous":
+            raise CardLookupError(f"'{name}' matches several cards; be more specific")
+        raise CardLookupError(f"no card named '{name}'")
+    resp.raise_for_status()
+    card = resp.json()
+    _cache_single(card)
+    return card
+
+
+def _cache_single(card: dict) -> None:
+    cards_dir = CACHE_DIR / "cards"
+    cards_dir.mkdir(parents=True, exist_ok=True)
+    (cards_dir / f"{card['id']}.json").write_text(json.dumps(card))
+
+
+def _satisfies(card: dict, ident: dict) -> bool:
+    if "set" in ident:
+        return card["set"] == ident["set"] and card["collector_number"] == ident["collector_number"]
+    wanted = _normalize(ident["name"])
+    names = {_normalize(card["name"])} | {_normalize(f["name"]) for f in card.get("card_faces") or []}
+    return wanted in names
+
+
+def fetch_collection(identifiers: list[dict]) -> list[dict | None]:
+    """Resolve many cards at once via POST /cards/collection (75 per
+    request, a short pause between batches, per Scryfall's guidelines).
+    Each identifier is {"name": ...} or {"set": ..., "collector_number": ...}.
+    Returns one card (or None if not found) per identifier, in order, and
+    caches every card found like fetch_named_card does. An explicit user
+    action only (e.g. importing a list) -- never called on page load."""
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    results: list[dict | None] = []
+    with httpx.Client(timeout=30) as client:
+        for start in range(0, len(identifiers), 75):
+            if start:
+                time.sleep(0.1)
+            batch = identifiers[start:start + 75]
+            resp = client.post("https://api.scryfall.com/cards/collection",
+                               json={"identifiers": batch}, headers=headers)
+            resp.raise_for_status()
+            found = resp.json().get("data", [])
+            for card in found:
+                _cache_single(card)
+            results.extend(next((c for c in found if _satisfies(c, ident)), None) for ident in batch)
+    return results
+
+
 _cached_cards: dict[str, object] = {}
 
 
 def cached_cards() -> list[dict]:
-    """Every card from every set already in CACHE_DIR, never hitting the
-    network. Parsed once and reused until a cache file is added or changes."""
-    files = sorted(CACHE_DIR.glob("*.json"))
-    key = tuple((str(p), p.stat().st_mtime_ns) for p in files)
+    """Every card already cached, never hitting the network: each set in
+    CACHE_DIR/*.json plus single cards in CACHE_DIR/cards/*.json (from
+    fetch_named_card). Parsed once and reused until a cache file is added or
+    changes."""
+    set_files = sorted(CACHE_DIR.glob("*.json"))
+    card_files = sorted((CACHE_DIR / "cards").glob("*.json"))
+    key = tuple((str(p), p.stat().st_mtime_ns) for p in (*set_files, *card_files))
     if _cached_cards.get("key") != key:
-        _cached_cards["cards"] = [card for p in files for card in json.loads(p.read_text())]
+        cards = [card for p in set_files for card in json.loads(p.read_text())]
+        cards += [json.loads(p.read_text()) for p in card_files]
+        _cached_cards["cards"] = cards
         _cached_cards["key"] = key
     return _cached_cards["cards"]  # type: ignore[return-value]
 

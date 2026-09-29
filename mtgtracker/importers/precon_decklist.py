@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from mtgtracker.allocation import allocate
-from mtgtracker.decks import add_to_deck, create_deck
+from mtgtracker.decks import add_to_deck, create_deck, record_version
 from mtgtracker.scryfall import fetch_set_cards, find_matches, index_by_name
 
 SEED_DIR = Path(__file__).parent.parent.parent / "seed" / "precon_decklists"
@@ -137,6 +137,7 @@ def create_deck_from_seed(
 
     conn.commit()
     allocate(conn, product_id)
+    record_version(conn, deck_id, "Initial list")
     return deck_id
 
 

@@ -7,7 +7,9 @@
 {% block content %}
 <p><a href="/decks">← Decks</a></p>
 <h1>{{ deck.name }}</h1>
-<p class="subtle">{{ deck.format }} · created {{ deck.created_at[:10] }}</p>
+<p class="subtle">{{ deck.format }} · created {{ deck.created_at[:10] }}
+  · {% if deck.version %}<a href="/decks/{{ deck.id }}/versions/{{ deck.version }}">v{{ deck.version }}</a>{% else %}not versioned yet{% endif %}
+  · <a href="/decks/{{ deck.id }}/modify">Modify deck</a></p>
 
 <div class="stats">
   <div class="stat"><div class="label">On list</div><div class="value">{{ list_count }}</div></div>

@@ -693,3 +693,142 @@ body:has(.card-dialog[open]) { overflow: hidden; }
 @media (hover: hover) and (min-width: 1480px) {
   body.with-panel .card-dialog { display: none; }
 }
+
+/* Deck modification page */
+.js-autosubmit .autosubmit-apply { display: none; }
+.changes, .candidates { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+/* A change: the card to add and the card it replaces, side by side at the
+   readable tile size, then its details and controls. */
+.change {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px 20px;
+  align-items: start;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.change.planned { border-style: dashed; }
+.change-cards { display: flex; align-items: center; gap: 10px; }
+.change-slot { width: var(--tile-min, 190px); display: flex; flex-direction: column; gap: 6px; }
+.change-slot-label { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.change-arrow { font-size: 1.6rem; color: var(--muted); padding-top: 18px; }
+.empty-slot { border-style: dashed; font-weight: 500; }
+.empty-slot small { font-weight: 400; }
+.change-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.pick-button {
+  padding: 7px 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pick-button[aria-expanded="true"] { filter: brightness(0.9); }
+/* The shared replacement picker. */
+.cut-picker {
+  padding: 14px;
+  border: 2px solid var(--accent);
+  border-radius: 12px;
+  background: var(--surface);
+  scroll-margin-top: 16px;
+}
+.cut-picker-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.cut-picker-title { margin-right: auto; }
+.pick-none {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.pick-tile { display: block; padding: 0; border: 0; background: none; font: inherit; color: inherit; cursor: pointer; text-align: left; }
+.pick-tile .tile-art { outline: 3px solid transparent; outline-offset: 2px; transition: outline-color 0.1s ease; }
+.pick-tile:hover .tile-art, .pick-tile:focus-visible .tile-art { outline-color: var(--accent); }
+.candidates { margin-top: 8px; }
+.candidate { display: flex; flex-direction: column; gap: 6px; }
+.candidate-meta { font-size: 0.85rem; }
+.candidate button {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.88rem;
+  cursor: pointer;
+  width: 100%;
+}
+.change-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.change-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.change-verb { color: var(--muted); }
+.change-hint { margin: 0; font-size: 0.85rem; }
+.change-cut label, .change-link label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 0.9rem; color: var(--muted); }
+.change-cut select, .change-link select, .apply-bar input {
+  max-width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+}
+.change-link { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.link-button { border: none; background: none; color: var(--accent); font: inherit; font-size: 0.9rem; cursor: pointer; padding: 4px; }
+.link-button:hover { text-decoration: underline; }
+.plan-form button, .change-link button, .change-cut button {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.apply-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  border: 1px solid var(--border);
+}
+.apply-bar p { margin: 0; flex-basis: 100%; }
+.apply-bar input { flex: 1; min-width: 200px; }
+.apply-bar button[disabled] { opacity: 0.5; cursor: not-allowed; }
+.plan-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
+.versions { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.versions li { padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.diff { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-size: 0.9rem; }
+.diff-add { color: var(--ok); }
+.diff-remove { color: var(--away); }
+@media (max-width: 760px) {
+  .change { grid-template-columns: minmax(0, 1fr); }
+  .change-cards { gap: 6px; }
+  .change-slot { width: auto; flex: 1; min-width: 0; }
+  .change-arrow { padding-top: 14px; font-size: 1.2rem; }
+}
+.import-form { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.import-form p { margin: 0; }
+.import-form textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: 0.92rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  resize: vertical;
+}

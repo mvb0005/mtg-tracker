@@ -24,6 +24,23 @@
 } | tojson }}
 {%- endmacro %}
 
+{% macro card_face(c, mode) %}
+{#- Just the card image (or placeholder) with qty/finish badges and panel
+    data -- no links inside, so it can sit in a button (the replacement
+    picker) or next to its own controls (change list, search results). -#}
+<figure class="tile{% if c.finish in ('foil', 'etched') %} foil{% endif %}" data-card='{{ panel_json(c, mode) }}'>
+  <div class="tile-art">
+    {% if c.art.image %}
+      <img src="{{ c.art.image }}" alt="{{ c.card_name }}" loading="lazy" referrerpolicy="no-referrer">
+    {% else %}
+      <div class="tile-placeholder"><span>{{ c.card_name }}</span></div>
+    {% endif %}
+    {% if c.qty > 1 %}<span class="tile-qty">{{ c.qty }}×</span>{% endif %}
+    {% if c.finish in ("foil", "etched") %}<span class="tile-finish">{{ c.finish }}</span>{% endif %}
+  </div>
+</figure>
+{% endmacro %}
+
 {% macro tile(c, mode) %}
 {#- Greyed out = not physically here: on a deck page, a card lent to another
     deck (or in none); on the cards page, one that's been sold/traded/lost.

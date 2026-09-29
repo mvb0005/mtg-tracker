@@ -18,6 +18,7 @@ deck_cards(lot_id) WHERE equipped = 1.
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime
 
 
 def create_deck(
@@ -64,6 +65,31 @@ def cut(conn: sqlite3.Connection, deck_id: int, lot_id: int) -> None:
         "DELETE FROM deck_cards WHERE deck_id = ? AND lot_id = ?", (deck_id, lot_id)
     )
     conn.commit()
+
+
+def record_version(
+    conn: sqlite3.Connection, deck_id: int, note: str | None = None, *, commit: bool = True
+) -> int:
+    """Bump the deck's version and snapshot its current list (every
+    deck_cards row, equipped or not). Returns the new version number. Pass
+    commit=False to make it part of a larger transaction."""
+    current = conn.execute("SELECT version FROM decks WHERE id = ?", (deck_id,)).fetchone()
+    if current is None:
+        raise ValueError(f"no deck with id {deck_id}")
+    version = current[0] + 1
+    conn.execute("UPDATE decks SET version = ? WHERE id = ?", (version, deck_id))
+    cur = conn.execute(
+        "INSERT INTO deck_versions (deck_id, version, created_at, note) VALUES (?, ?, ?, ?)",
+        (deck_id, version, datetime.now(UTC).isoformat(), note),
+    )
+    conn.execute(
+        "INSERT INTO deck_version_cards (version_id, lot_id)"
+        " SELECT ?, lot_id FROM deck_cards WHERE deck_id = ?",
+        (cur.lastrowid, deck_id),
+    )
+    if commit:
+        conn.commit()
+    return version
 
 
 def reassemble(conn: sqlite3.Connection, deck_id: int) -> list[dict]:

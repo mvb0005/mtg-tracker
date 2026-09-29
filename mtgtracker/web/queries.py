@@ -199,6 +199,31 @@ def search_cards(conn: sqlite3.Connection, query: str = "") -> list[dict]:
     )
 
 
+def lots_as_rows(conn: sqlite3.Connection, lot_ids: list[int], *, where: str) -> list[dict]:
+    """These lots grouped by card name as display rows (like search_cards,
+    ordered by mana value), for showing a past deck version. `where` is the
+    location text the details panel shows."""
+    if not lot_ids:
+        return []
+    marks = ",".join("?" * len(lot_ids))
+    rows = conn.execute(
+        f"""
+        SELECT card_name, COUNT(*) AS qty, MIN(scryfall_id) AS scryfall_id, MIN(finish) AS finish,
+               MIN(set_code) AS set_code, MIN(collector_number) AS collector_number,
+               MIN(id) AS lot_id, GROUP_CONCAT(id) AS lot_ids,
+               SUM(allocated_cost_cents) AS cost_cents
+        FROM lots WHERE id IN ({marks})
+        GROUP BY card_name
+        """,
+        tuple(lot_ids),
+    ).fetchall()
+    result = []
+    for row in _with_card_info(rows, conn):
+        row.update(where=where, disposition_type=None, current_deck_id=None, current_deck_name=None)
+        result.append(row)
+    return sorted(result, key=lambda r: cardinfo.mana_value_order(r["card_name"], r["art"]))
+
+
 def collapse_by_name(rows: list[dict]) -> list[dict]:
     """Merge rows for the same card into one, whatever deck or printing each
     copy is in (2x Sol Ring, one per deck). Quantities and cost add up;
