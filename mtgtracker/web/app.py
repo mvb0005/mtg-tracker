@@ -20,17 +20,18 @@ import re
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup, escape
 
 from mtgtracker import commanders, db, printings, scryfall
-from mtgtracker.cardinfo import BASIC_LAND_NAMES
-from mtgtracker.web import queries
+from mtgtracker.cardinfo import BASIC_LAND_NAMES, SECTION_ORDER
+from mtgtracker.web import filters, queries
 
 SET_CODE_RE = re.compile(r"^[a-z0-9]{2,8}$")
 
@@ -52,6 +53,27 @@ def format_cents(cents: int | None, currency: str = "USD") -> str:
 
 templates.env.filters["money"] = format_cents
 
+_MANA_SYMBOL_RE = re.compile(r"\{([^}]+)\}")
+
+
+def mana_symbols(cost: str | None) -> Markup:
+    """"{2}{R}{R}" -> Scryfall mana-symbol images (same source as the hover
+    panel). Anything that isn't a {symbol} is escaped as plain text."""
+    parts = []
+    for i, piece in enumerate(_MANA_SYMBOL_RE.split(cost or "")):
+        if i % 2 == 0:
+            parts.append(escape(piece))
+        else:
+            name = quote(piece.replace("/", ""), safe="")
+            parts.append(Markup(
+                '<img class="mana" src="https://svgs.scryfall.io/card-symbols/{}.svg" alt="{{{}}}"'
+                ' referrerpolicy="no-referrer" loading="lazy">'
+            ).format(name, piece))
+    return Markup("").join(parts)
+
+
+templates.env.filters["mana_symbols"] = mana_symbols
+
 
 @functools.cache
 def static_version(path: str) -> str:
@@ -63,6 +85,12 @@ def static_version(path: str) -> str:
 
 templates.env.globals["static_version"] = static_version
 templates.env.globals["basic_names"] = BASIC_LAND_NAMES
+templates.env.globals["sorts"] = filters.SORTS
+templates.env.globals["colors"] = filters.COLORS
+templates.env.globals["type_labels"] = SECTION_ORDER
+templates.env.globals["type_options"] = {label: label for label in SECTION_ORDER}
+templates.env.globals["mana_values"] = filters.MANA_VALUES
+templates.env.globals["color_modes"] = filters.COLOR_MODES
 
 
 def create_app(db_path: str | Path) -> FastAPI:
@@ -139,9 +167,14 @@ def create_app(db_path: str | Path) -> FastAPI:
     @app.get("/decks/{deck_id}", response_class=HTMLResponse)
     def deck_detail(
         deck_id: int, request: Request, view: str = "", notice: str = "", error: str = "",
+        sort: str = "", color: list[str] = Query([]), color_mode: str = "", type: list[str] = Query([]),
+        mv: list[str] = Query([]),
         conn: sqlite3.Connection = Depends(get_conn),
     ):
-        detail = queries.get_deck(conn, deck_id)
+        card_filters = filters.CardFilters.parse(
+            sort=sort, color=color, color_mode=color_mode, type=type, mv=mv
+        )
+        detail = queries.get_deck(conn, deck_id, card_filters)
         if detail is None:
             raise HTTPException(status_code=404, detail="No such deck")
         commander_options = (
@@ -149,7 +182,7 @@ def create_app(db_path: str | Path) -> FastAPI:
         )
         return render(
             request, "deck_detail.html", view=view, notice=notice, error=error,
-            commander_options=commander_options, **detail,
+            commander_options=commander_options, filters=card_filters, **detail,
         )
 
     @app.post("/decks/{deck_id}/commander")
@@ -169,9 +202,28 @@ def create_app(db_path: str | Path) -> FastAPI:
 
     @app.get("/cards", response_class=HTMLResponse)
     def cards(
-        request: Request, q: str = "", view: str = "", conn: sqlite3.Connection = Depends(get_conn)
+        request: Request, q: str = "", view: str = "",
+        sort: str = "", color: list[str] = Query([]), color_mode: str = "", type: list[str] = Query([]),
+        mv: list[str] = Query([]), deck: list[str] = Query([]),
+        conn: sqlite3.Connection = Depends(get_conn),
     ):
-        return render(request, "cards.html", card_rows=queries.search_cards(conn, q), q=q, view=view)
+        decks = queries.list_decks(conn)
+        card_filters = filters.CardFilters.parse(
+            sort=sort, color=color, color_mode=color_mode, type=type, mv=mv, deck=deck,
+            deck_ids={d["id"] for d in decks},
+        )
+        # Filter individual copies first (so a deck filter counts only that
+        # deck's copies), then merge copies of the same card into one row.
+        copies = queries.search_cards(conn, q)
+        matching = [row for row in copies if card_filters.matches(row)]
+        card_rows = sorted(queries.collapse_by_name(matching), key=card_filters.sort_key)
+        return render(
+            request, "cards.html", card_rows=card_rows, sections=queries.sections_by_type(card_rows),
+            q=q, view=view, filters=card_filters, decks=decks,
+            deck_options={**{str(d["id"]): d["name"] for d in decks}, filters.NO_DECK: "Not in a deck"},
+            facets=card_filters.facet_counts(copies),
+            total=queries.count_cards(conn), shown=sum(r["qty"] for r in card_rows),
+        )
 
     @app.get("/printings", response_class=HTMLResponse)
     def printings_queue(

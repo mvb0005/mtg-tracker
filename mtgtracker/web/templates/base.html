@@ -16,9 +16,11 @@
       {% endfor %}
     </nav>
   </header>
-  <main>
-    {% block content %}{% endblock %}
-  </main>
-  {% block panel %}{% endblock %}
+  <div class="page">
+    <main>
+      {% block content %}{% endblock %}
+    </main>
+    {% block panel %}{% endblock %}
+  </div>
 </body>
 </html>

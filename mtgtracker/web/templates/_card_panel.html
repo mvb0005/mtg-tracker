@@ -1,5 +1,14 @@
-{# Hover/focus card details, shown beside the content on wide screens with a mouse (see card-panel.js). #}
+{# Card details: beside the content on wide screens with a mouse (hover or
+   focus), and as a tap-to-open sheet everywhere else, closed by swiping it
+   down, tapping outside it, or Escape. See card-panel.js. #}
 <aside id="card-panel" class="card-panel" aria-live="polite" aria-label="Card details">
   <p class="card-panel-empty subtle">Hover over a card to see its details.</p>
 </aside>
+<dialog id="card-dialog" class="card-dialog" aria-label="Card details">
+  <div class="card-dialog-top">
+    <div class="card-dialog-handle" aria-hidden="true"></div>
+    <div class="card-dialog-position subtle" aria-live="polite"></div>
+  </div>
+  <div class="card-dialog-content"></div>
+</dialog>
 <script src="{{ url_for('static', path='card-panel.js') }}?v={{ static_version('card-panel.js') }}" defer></script>

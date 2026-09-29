@@ -1,0 +1,54 @@
+{# Deck breakdown: mana curve (columns), mana colors and card types (stacked
+   bars with counted legends). Plain HTML; every mark has a hover title, and
+   counts are always written out so color never carries meaning alone. #}
+{% set b = breakdown %}
+<details class="breakdown" open>
+  <summary>Deck breakdown</summary>
+  <div class="breakdown-grid">
+
+    <section class="breakdown-card" aria-labelledby="bd-curve">
+      <h3 id="bd-curve">Mana curve</h3>
+      <p class="subtle breakdown-sub">{{ b.curve_total }} non-land card{{ "s" if b.curve_total != 1 }}{% if b.uncounted %} · {{ b.uncounted }} without cached data{% endif %}</p>
+      {% if b.curve %}
+      <div class="curve" role="list">
+        {% for bar in b.curve %}
+        <div class="curve-col" role="listitem" title="{{ bar.count }} card{{ 's' if bar.count != 1 }} at mana value {{ bar.value }}">
+          <span class="curve-count">{{ bar.count if bar.count else "" }}</span>
+          <div class="curve-track"><div class="curve-bar" style="height: {{ '%.1f' | format(bar.pct) }}%"></div></div>
+          <span class="curve-value">{{ bar.value }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="subtle">No cached mana values yet.</p>
+      {% endif %}
+    </section>
+
+    <section class="breakdown-card" aria-labelledby="bd-colors">
+      <h3 id="bd-colors">Mana colors</h3>
+      <p class="subtle breakdown-sub">Non-land cards by color</p>
+      {% if b.colors %}
+      <div class="stack" role="img" aria-label="{% for s in b.colors %}{{ s.label }} {{ s.count }}{{ ', ' if not loop.last }}{% endfor %}">
+        {% for s in b.colors %}<div class="stack-seg mana-{{ s.key }}" style="width: {{ '%.2f' | format(s.pct) }}%" title="{{ s.label }}: {{ s.count }} ({{ '%.0f' | format(s.pct) }}%)"></div>{% endfor %}
+      </div>
+      <ul class="legend">
+        {% for s in b.colors %}<li><span class="swatch mana-{{ s.key }}"></span>{{ s.label }} <strong>{{ s.count }}</strong></li>{% endfor %}
+      </ul>
+      {% else %}
+      <p class="subtle">No cached color data yet.</p>
+      {% endif %}
+    </section>
+
+    <section class="breakdown-card" aria-labelledby="bd-types">
+      <h3 id="bd-types">Card types</h3>
+      <p class="subtle breakdown-sub">All {{ b.type_total }} cards</p>
+      <div class="stack" role="img" aria-label="{% for s in b.types %}{{ s.label }} {{ s.count }}{{ ', ' if not loop.last }}{% endfor %}">
+        {% for s in b.types %}<div class="stack-seg {{ 'series-' ~ s.slot if s.slot else 'series-other' }}" style="width: {{ '%.2f' | format(s.pct) }}%" title="{{ s.label }}: {{ s.count }} ({{ '%.0f' | format(s.pct) }}%)"></div>{% endfor %}
+      </div>
+      <ul class="legend">
+        {% for s in b.types %}<li><span class="swatch {{ 'series-' ~ s.slot if s.slot else 'series-other' }}"></span>{{ s.label }} <strong>{{ s.count }}</strong></li>{% endfor %}
+      </ul>
+    </section>
+
+  </div>
+</details>

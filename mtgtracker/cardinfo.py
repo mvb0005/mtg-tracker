@@ -46,6 +46,9 @@ class CardInfo:
     rarity: str | None = None
     set_name: str | None = None
     artist: str | None = None
+    # Card colors (Scryfall "colors", front face for double-faced cards):
+    # e.g. ("R",), () for colorless; None when not cached.
+    colors: tuple[str, ...] | None = None
 
     def category(self, card_name: str) -> str:
         if self.type_line:
@@ -56,6 +59,17 @@ class CardInfo:
         if card_name in BASIC_LAND_NAMES:
             return "Lands"
         return OTHER
+
+    def type_labels(self, card_name: str) -> set[str]:
+        """Every card type on the (front face) type line, e.g. an Artifact
+        Creature is {"Creatures", "Artifacts"}. `category` picks just one of
+        these for display sections; filters use them all."""
+        if self.type_line:
+            front = self.type_line.split("//")[0].split("—")[0]
+            labels = {label for type_word, label in CATEGORIES if type_word in front}
+            if labels:
+                return labels
+        return {self.category(card_name)}
 
 
 def image_url(card: dict) -> str | None:
@@ -93,7 +107,15 @@ def _info(card: dict, *, exact: bool) -> CardInfo:
         rarity=card.get("rarity"),
         set_name=card.get("set_name"),
         artist=card.get("artist") or (faces[0].get("artist") if faces else None),
+        colors=_colors(card),
     )
+
+
+def _colors(card: dict) -> tuple[str, ...] | None:
+    colors = card.get("colors")
+    if colors is None and card.get("card_faces"):
+        colors = card["card_faces"][0].get("colors")
+    return tuple(colors) if colors is not None else None
 
 
 def names(card: dict) -> set[str]:
@@ -173,10 +195,12 @@ def color_weight(mana_cost: str) -> tuple[int, int]:
     return len(distinct), len(colored)
 
 
-def mana_value_order(card_name: str, info: CardInfo) -> tuple:
-    """Sort key: highest mana value first; among equal mana values, colored
-    mana outranks colorless -- more distinct colors first, then more colored
-    symbols ({1}{U}{R} > {1}{R}{R} > {3}); then by name. Uses the front face's
-    cost. Cards whose mana value isn't cached sort after everything else."""
+def mana_value_order(card_name: str, info: CardInfo, *, descending: bool = True) -> tuple:
+    """Sort key: highest mana value first (lowest with descending=False);
+    among equal mana values, colored mana outranks colorless either way --
+    more distinct colors first, then more colored symbols
+    ({1}{U}{R} > {1}{R}{R} > {3}); then by name. Uses the front face's cost.
+    Cards whose mana value isn't cached sort after everything else."""
     colors, colored = color_weight(info.faces[0]["mana_cost"] if info.faces else "")
-    return (info.cmc is None, -(info.cmc or 0), -colors, -colored, card_name.casefold())
+    value = info.cmc or 0
+    return (info.cmc is None, -value if descending else value, -colors, -colored, card_name.casefold())

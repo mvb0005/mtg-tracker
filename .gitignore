@@ -22,3 +22,6 @@ data/*.db-shm
 
 # Claude Code subagent worktrees
 .claude/worktrees/
+
+# Local secrets (e.g. CLOUDFLARE_TUNNEL_TOKEN) -- never committed
+.env

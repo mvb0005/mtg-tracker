@@ -12,6 +12,8 @@ import sqlite3
 from mtgtracker import cardinfo
 from mtgtracker.decks import reassemble
 from mtgtracker.printings import BASIC_LAND_NAMES
+from mtgtracker.web.breakdown import deck_breakdown
+from mtgtracker.web.filters import CardFilters
 
 COMMANDER_SECTION = "Commander"
 _BASICS_SQL = ", ".join("?" for _ in BASIC_LAND_NAMES)
@@ -85,7 +87,13 @@ def list_decks(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
-def get_deck(conn: sqlite3.Connection, deck_id: int) -> dict | None:
+def get_deck(
+    conn: sqlite3.Connection, deck_id: int, filters: CardFilters | None = None
+) -> dict | None:
+    """The deck, its display groups, and `sections` for the grid/list views.
+    `filters` narrows and orders only what's shown (sections); `groups`,
+    counts and the breakdown always cover the whole deck."""
+    filters = filters or CardFilters()
     deck = conn.execute("SELECT * FROM decks WHERE id = ?", (deck_id,)).fetchone()
     if deck is None:
         return None
@@ -101,6 +109,7 @@ def get_deck(conn: sqlite3.Connection, deck_id: int) -> dict | None:
                current_deck.name AS current_deck_name,
                COUNT(*) AS qty,
                MIN(lots.id) AS lot_id,
+               GROUP_CONCAT(lots.id) AS lot_ids,
                MIN(lots.scryfall_id) AS scryfall_id,
                SUM(lots.allocated_cost_cents) AS cost_cents
         FROM deck_cards
@@ -115,16 +124,20 @@ def get_deck(conn: sqlite3.Connection, deck_id: int) -> dict | None:
         """,
         (*BASIC_LAND_NAMES, deck_id),
     ).fetchall()
-    # Commander first, then highest mana value first (list view uses the
-    # same order); the grid additionally splits by type.
+    # Commander first, then the chosen sort (highest mana value by default);
+    # both views split into type sections.
     commander = deck["commander"]
     groups = sorted(
-        _with_card_info(groups),
+        _with_card_info(groups, conn),
         key=lambda g: (g["card_name"] != commander, cardinfo.mana_value_order(g["card_name"], g["art"])),
+    )
+    shown = sorted(
+        (g for g in groups if filters.matches(g)),
+        key=lambda g: (g["card_name"] != commander, filters.sort_key(g)),
     )
 
     sections: dict[str, list[dict]] = {}
-    for group in groups:
+    for group in shown:
         label = COMMANDER_SECTION if group["card_name"] == commander else group["category"]
         sections.setdefault(label, []).append(group)
 
@@ -142,12 +155,20 @@ def get_deck(conn: sqlite3.Connection, deck_id: int) -> dict | None:
             for label in [COMMANDER_SECTION, *cardinfo.SECTION_ORDER]
             if label in sections
         ],
+        "shown_count": sum(g["qty"] for g in shown),
+        "facets": filters.facet_counts(groups),
+        "breakdown": deck_breakdown(groups),
         "list_count": sum(g["qty"] for g in groups),
         "equipped_count": sum(g["qty"] for g in groups if g["equipped"]),
         "list_cost_cents": list_cost,
         "missing": reassemble(conn, deck_id),
         "deck_names": {row["id"]: row["name"] for row in conn.execute("SELECT id, name FROM decks")},
     }
+
+
+def count_cards(conn: sqlite3.Connection) -> int:
+    """Every lot, disposed or not -- the cards page's unfiltered total."""
+    return conn.execute("SELECT COUNT(*) FROM lots").fetchone()[0]
 
 
 def search_cards(conn: sqlite3.Connection, query: str = "") -> list[dict]:
@@ -159,6 +180,7 @@ def search_cards(conn: sqlite3.Connection, query: str = "") -> list[dict]:
                dispositions.disposition_type,
                COUNT(*) AS qty,
                MIN(lots.id) AS lot_id,
+               GROUP_CONCAT(lots.id) AS lot_ids,
                MIN(lots.scryfall_id) AS scryfall_id,
                SUM(lots.allocated_cost_cents) AS cost_cents
         FROM lots
@@ -173,21 +195,122 @@ def search_cards(conn: sqlite3.Connection, query: str = "") -> list[dict]:
         ("%" + _escape_like(query.strip()) + "%",),
     ).fetchall()
     return sorted(
-        _with_card_info(rows), key=lambda c: cardinfo.mana_value_order(c["card_name"], c["art"])
+        _with_card_info(rows, conn), key=lambda c: cardinfo.mana_value_order(c["card_name"], c["art"])
     )
 
 
-def _with_card_info(rows: list[sqlite3.Row]) -> list[dict]:
+def collapse_by_name(rows: list[dict]) -> list[dict]:
+    """Merge rows for the same card into one, whatever deck or printing each
+    copy is in (2x Sol Ring, one per deck). Quantities and cost add up;
+    `where`, `printing` and `finish` summarize the copies for the hover panel.
+    `lot_id` points at an unresolved copy when there is one, so "needs
+    printing" links to a lot that actually needs it. A merged card only counts
+    as disposed if every copy is."""
+    by_name: dict[str, list[dict]] = {}
+    for row in rows:
+        by_name.setdefault(row["card_name"], []).append(row)
+
+    merged = []
+    for copies in by_name.values():
+        unresolved = [c for c in copies if c["scryfall_id"] is None]
+        pinned = [c for c in copies if c["scryfall_id"] is not None]
+        printings = {(c["set_code"], c["collector_number"]) for c in pinned}
+        finishes: dict[str, int] = {}
+        places: dict[str, int] = {}
+        for c in copies:
+            finishes[c["finish"]] = finishes.get(c["finish"], 0) + c["qty"]
+            place = (c["disposition_type"] or "").capitalize() or c["current_deck_name"] or "Not in any deck"
+            places[place] = places.get(place, 0) + c["qty"]
+
+        dispositions = {c["disposition_type"] for c in copies}
+        base = (pinned or copies)[0]
+        printing_text = ", ".join(f"{s.upper()} #{n}" for s, n in sorted(printings))
+        if unresolved and printing_text:
+            printing_text += f" + {sum(c['qty'] for c in unresolved)} not picked"
+        merged.append({
+            **base,
+            "qty": sum(c["qty"] for c in copies),
+            "cost_cents": sum(c["cost_cents"] or 0 for c in copies),
+            "lot_id": min(c["lot_id"] for c in (unresolved or copies)),
+            # A single shared printing keeps set/number; mixed or unpicked -> None.
+            "set_code": base["set_code"] if len(printings) == 1 and not unresolved else None,
+            "collector_number": base["collector_number"] if len(printings) == 1 and not unresolved else None,
+            "printing": printing_text or None,
+            "finish": next(iter(finishes)) if len(finishes) == 1
+                      else ", ".join(f"{n} {f}" for f, n in sorted(finishes.items())),
+            "decks": _merge_decks(copies),
+            "disposition_type": base["disposition_type"] if len(dispositions) == 1 else None,
+            "current_deck_id": base["current_deck_id"] if len(places) == 1 else None,
+            "where": next(iter(places)) if len(places) == 1 else ", ".join(
+                place if n == 1 else f"{place} ({n})" for place, n in sorted(places.items())
+            ),
+        })
+    return merged
+
+
+def sections_by_type(rows: list[dict]) -> list[tuple[str, list[dict], int]]:
+    """(label, rows, card count) per card-type section, in deck-list order.
+    Rows keep their existing order within a section."""
+    sections: dict[str, list[dict]] = {}
+    for row in rows:
+        sections.setdefault(row["category"], []).append(row)
+    return [
+        (label, sections[label], sum(r["qty"] for r in sections[label]))
+        for label in cardinfo.SECTION_ORDER
+        if label in sections
+    ]
+
+
+def _with_card_info(rows: list[sqlite3.Row], conn: sqlite3.Connection) -> list[dict]:
     """Rows as dicts plus `art` (image/type from the Scryfall cache, never
-    the network) and `category` (deck-list section)."""
+    the network), `category` (deck-list section) and `decks` (see
+    _deck_memberships)."""
+    memberships = _deck_memberships(conn)
     result = []
     for row in rows:
         item = dict(row)
         art = cardinfo.lookup(item["scryfall_id"], item["card_name"], item["finish"])
         item["art"] = art
         item["category"] = art.category(item["card_name"])
+        lot_ids = [int(i) for i in (item.pop("lot_ids") or "").split(",") if i]
+        item["decks"] = _decks_for(lot_ids, memberships)
         result.append(item)
     return result
+
+
+def _deck_memberships(conn: sqlite3.Connection) -> dict[int, list[tuple[int, str, bool]]]:
+    """lot_id -> [(deck_id, deck name, equipped there)] for every deck list
+    the lot is on. One query for the whole (small, single-user) collection."""
+    memberships: dict[int, list[tuple[int, str, bool]]] = {}
+    for row in conn.execute(
+        "SELECT deck_cards.lot_id, decks.id, decks.name, deck_cards.equipped"
+        " FROM deck_cards JOIN decks ON decks.id = deck_cards.deck_id"
+    ):
+        memberships.setdefault(row[0], []).append((row[1], row[2], bool(row[3])))
+    return memberships
+
+
+def _decks_for(lot_ids: list[int], memberships: dict) -> list[dict]:
+    """Decks whose lists include any of these lots: how many copies each list
+    has (`count`) and whether the deck physically holds any of them now
+    (`current`). Sorted by deck name."""
+    decks: dict[int, dict] = {}
+    for lot_id in lot_ids:
+        for deck_id, name, equipped in memberships.get(lot_id, ()):
+            deck = decks.setdefault(deck_id, {"id": deck_id, "name": name, "count": 0, "current": False})
+            deck["count"] += 1
+            deck["current"] = deck["current"] or equipped
+    return sorted(decks.values(), key=lambda d: d["name"].casefold())
+
+
+def _merge_decks(copies: list[dict]) -> list[dict]:
+    merged: dict[int, dict] = {}
+    for copy in copies:
+        for deck in copy["decks"]:
+            into = merged.setdefault(deck["id"], {**deck, "count": 0, "current": False})
+            into["count"] += deck["count"]
+            into["current"] = into["current"] or deck["current"]
+    return sorted(merged.values(), key=lambda d: d["name"].casefold())
 
 
 def needs_input(conn: sqlite3.Connection) -> list[sqlite3.Row]:

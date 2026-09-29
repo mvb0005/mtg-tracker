@@ -2,18 +2,12 @@ import json
 import re
 
 import httpx
-import pytest
 from fastapi.testclient import TestClient
 
 from mtgtracker import db, printings
 from mtgtracker.decks import borrow, create_deck
 from mtgtracker.web.app import create_app, format_cents
 from tests.conftest import install_transport
-
-
-@pytest.fixture
-def client(db_path, cache_dir):
-    return TestClient(create_app(db_path))
 
 
 def test_format_cents():
@@ -76,7 +70,10 @@ def test_deck_detail_groups_basics_and_shows_reassemble(client, db_path):
     assert resp.status_code == 200
     html = resp.text
     # 34 Islands collapse into one grouped row.
-    assert re.search(r'<td class="num">34</td>\s*<td class="name">Island', html)
+    assert re.search(r'<span class="deck-row-qty">34</span>\s*<span class="deck-row-name">Island', html)
+    # The borrowed Counterspell's row is greyed out; the panel data says where it is.
+    away_row = re.search(r'<li class="deck-row away" data-card=\'([^\']*)\'', html)
+    assert json.loads(away_row.group(1))["where"] == "Lent to Blue Pile"
     assert "Pull these 1 card back" in html
     assert "Blue Pile" in html  # where the borrowed Counterspell is now
     assert "needs printing" in html
@@ -295,12 +292,13 @@ def test_cards_grid_and_list_views(client, cache_dir):
     urls = _add_art(cache_dir, **{"286": "Artifact"})
     grid = client.get("/cards", params={"q": "sol ring"}).text
     assert urls["286"] in grid
-    assert "2 cards matching" in grid
+    assert "Showing 2 of 200 cards" in grid
     assert 'href="/cards?q=sol%20ring&amp;view=list"' in grid
 
     listing = client.get("/cards", params={"q": "sol ring", "view": "list"}).text
     assert f'src="{urls["286"]}"' not in listing  # no images drawn, only panel data
-    assert "<table>" in listing
+    assert '<section class="deck-section">' in listing
+    assert re.search(r"<h3>Artifacts</h3>\s*<span>2 cards</span>", listing)
     assert 'name="view" value="list"' in listing  # search keeps the list view
 
 
@@ -355,15 +353,16 @@ def test_deck_shows_commander_first_then_highest_mana_value(client, db_path, cac
     assert order == sorted(order)
 
     rows = client.get(f"/decks/{keen}", params={"view": "list"}).text
-    names = re.findall(r'<td class="name">([^<]+?)(?: <a|</td>)', rows)
+    names = re.findall(r'<span class="deck-row-name">([^<]+?)(?: <a|<span|</span>)', rows)
     assert names[0] == "Sai, Master Thopterist"
+    assert re.findall(r"<h3>([^<]+)</h3>", rows)[0] == "Commander"
     assert names.index("Mind&#39;s Eye") < names.index("Arcane Signet") < names.index("Sol Ring")
 
 
 def test_cards_ordered_by_mana_value(client, cache_dir):
     _set_cmc(cache_dir, {"Sol Ring": 1, "Arcane Signet": 2})
     html = client.get("/cards", params={"view": "list", "q": "i"}).text
-    names = re.findall(r'<td class="name">([^<]+)</td>', html)
+    names = re.findall(r'<span class="deck-row-name">([^<]+?)(?: <a|<span|</span>)', html)
     assert names.index("Arcane Signet") < names.index("Sol Ring")
 
 
@@ -436,6 +435,8 @@ def test_card_panel_data_on_tiles_and_rows(client, db_path, cache_dir):
     for url in (f"/decks/{keen}", f"/decks/{keen}?view=list", "/cards", "/cards?view=list"):
         html = client.get(url).text
         assert 'id="card-panel"' in html, url
+        assert '<dialog id="card-dialog"' in html, url  # tap-to-open sheet (phones)
+        assert 'class="card-dialog-position' in html, url  # "3 / 69" while paging
         assert re.search(r'card-panel\.js\?v=[0-9a-f]{12}"', html), url
         payloads = _panel_payloads(html)
         sol = next(p for p in payloads if p["name"] == "Sol Ring")
@@ -444,7 +445,8 @@ def test_card_panel_data_on_tiles_and_rows(client, db_path, cache_dir):
         assert sol["printing"] is None  # not pinned yet
         assert sol["exact"] is False
         assert sol["cost"].startswith("$")
-        assert sol["where"] in {"In this deck", "Keen Engineering", "Reign of Dragons"}
+        # Deck pages: this deck. Cards page: both decks' copies merged into one row.
+        assert sol["where"] in {"In this deck", "Keen Engineering, Reign of Dragons"}, url
 
     # Every row/tile carries a payload; names with apostrophes survive the
     # single-quoted attribute.
@@ -491,3 +493,133 @@ def test_commander_picker_options_carry_panel_data(client, db_path, cache_dir):
     assert set(payloads) == {"Sai, Master Thopterist", "Padeem, Consul of Innovation"}
     assert payloads["Padeem, Consul of Innovation"]["where"] == "In this deck"
     assert payloads["Padeem, Consul of Innovation"]["faces"][0]["type_line"].startswith("Legendary Creature")
+
+
+def test_cards_list_greys_out_disposed_cards(client, db_path):
+    conn = db.connect(db_path)
+    lot = conn.execute("SELECT id FROM lots WHERE card_name = 'Counterspell'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO dispositions (lot_id, disposed_at, disposition_type, proceeds_cents)"
+        " VALUES (?, '2026-09-28', 'sold', 150)",
+        (lot,),
+    )
+    conn.commit()
+    conn.close()
+
+    html = client.get("/cards", params={"view": "list"}).text
+    rows = re.findall(r'<li class="deck-row( away)?" data-card=\'([^\']*)\'', html)
+    away = {json.loads(data)["name"]: json.loads(data)["where"] for flag, data in rows if flag}
+    assert away == {"Counterspell": "Sold"}
+    assert sum(json.loads(data)["qty"] for _, data in rows) == 200
+
+
+def test_cards_page_collapses_copies_across_decks(client, db_path):
+    html = client.get("/cards", params={"view": "list"}).text
+    rows = [json.loads(raw) for raw in re.findall(r"data-card='([^']*)'", html)]
+    by_name = {row["name"]: row for row in rows}
+    assert len(by_name) == len(rows)  # one row per card name
+
+    sol = by_name["Sol Ring"]
+    assert sol["qty"] == 2
+    assert sol["where"] == "Keen Engineering, Reign of Dragons"
+    assert sol["printing"] is None  # neither copy pinned yet
+    assert by_name["Island"]["qty"] == 34
+    assert sum(row["qty"] for row in rows) == 200
+
+    # A deck filter applies to copies before merging.
+    conn = db.connect(db_path)
+    keen = conn.execute("SELECT id FROM decks WHERE name = 'Keen Engineering'").fetchone()["id"]
+    conn.close()
+    html = client.get("/cards", params={"view": "list", "deck": str(keen)}).text
+    rows = {json.loads(raw)["name"]: json.loads(raw) for raw in re.findall(r"data-card='([^']*)'", html)}
+    assert rows["Sol Ring"]["qty"] == 1
+    assert rows["Sol Ring"]["where"] == "Keen Engineering"
+    assert "Showing 100 of 200 cards" in html
+
+
+def test_collapsed_printing_summary_and_needs_printing_link(client, db_path, cache_dir):
+    conn = db.connect(db_path)
+    keen_sol = _unresolved_lot(db_path, "Sol Ring", "Keen Engineering")
+    reign_sol = _unresolved_lot(db_path, "Sol Ring", "Reign of Dragons")
+    printings.assign(conn, keen_sol, [(_scryfall_id("Sol Ring", "286"), "nonfoil", 1)])
+    conn.close()
+
+    html = client.get("/cards", params={"q": "sol ring", "view": "list"}).text
+    [sol] = [json.loads(raw) for raw in re.findall(r"data-card='([^']*)'", html)]
+    assert sol["printing"] == "FDC #286 + 1 not picked"
+    # "needs printing" links to the copy that still needs it.
+    assert f'href="/printings/{reign_sol}"' in html
+
+
+def test_filters_and_sorting(client, db_path, cache_dir):
+    path = cache_dir / "fdc.json"
+    cards = json.loads(path.read_text())
+    meta = {"Sol Ring": (1, [], "Artifact"), "Arcane Signet": (2, [], "Artifact"),
+            "Counterspell": (2, ["U"], "Instant"), "Lathliss, Dragon Queen": (6, ["R"], "Legendary Creature")}
+    for card in cards:
+        if card["name"] in meta:
+            cmc, colors, type_line = meta[card["name"]]
+            card.update(cmc=cmc, colors=colors, type_line=type_line)
+    path.write_text(json.dumps(cards))
+
+    def names(**params):
+        html = client.get("/cards", params={"view": "list", **params}).text
+        return [json.loads(raw)["name"] for raw in re.findall(r"data-card='([^']*)'", html)]
+
+    assert names(color="U") == ["Counterspell"]
+    assert names(color="R") == ["Lathliss, Dragon Queen"]
+    assert set(names(color="C", type="Artifacts")) == {"Sol Ring", "Arcane Signet"}
+    assert names(type="Instants", color="U") == ["Counterspell"]
+
+    ordered = names(type="Artifacts", color="C", sort="mv-asc")
+    assert ordered == ["Sol Ring", "Arcane Signet"]
+    assert names(type="Artifacts", color="C") == ["Arcane Signet", "Sol Ring"]  # default: high to low
+    assert names(type="Artifacts", color="C", sort="name") == ["Arcane Signet", "Sol Ring"]
+
+    # Unknown values fall back to defaults instead of erroring.
+    assert client.get("/cards", params={"color": "purple", "sort": "x", "deck": "999"}).status_code == 200
+
+    # Deck page: same filters, and links keep them.
+    conn = db.connect(db_path)
+    keen = conn.execute("SELECT id FROM decks WHERE name = 'Keen Engineering'").fetchone()["id"]
+    conn.close()
+    html = client.get(f"/decks/{keen}", params={"color": "U", "sort": "name"}).text
+    tiles = re.findall(r'<figure class="[^"]*" data-card=\'([^\']*)\'', html)
+    shown = [json.loads(raw)["name"] for raw in tiles]
+    assert shown == ["Counterspell"]
+    assert f'href="/decks/{keen}?sort=name&amp;color=U&amp;view=list"' in html
+    assert "Showing 1 of 100 cards" in html
+    assert "Deck breakdown" in html  # breakdown still covers the whole deck
+
+
+def test_card_details_list_every_deck_with_counts(client, db_path):
+    conn = db.connect(db_path)
+    keen = conn.execute("SELECT id FROM decks WHERE name = 'Keen Engineering'").fetchone()["id"]
+    reign = conn.execute("SELECT id FROM decks WHERE name = 'Reign of Dragons'").fetchone()["id"]
+    lot = conn.execute(
+        "SELECT lots.id FROM lots JOIN deck_cards ON deck_cards.lot_id = lots.id"
+        " WHERE deck_cards.deck_id = ? AND lots.card_name = 'Counterspell'",
+        (keen,),
+    ).fetchone()["id"]
+    pile = create_deck(conn, "Blue Pile", "2026-09-28")
+    borrow(conn, lot, pile)
+    conn.close()
+
+    def payloads(url, **params):
+        html = client.get(url, params=params).text
+        return {json.loads(raw)["name"]: json.loads(raw) for raw in re.findall(r"data-card='([^']*)'", html)}
+
+    # A lent card: on both lists, physically in Blue Pile.
+    counterspell = payloads(f"/decks/{keen}")["Counterspell"]
+    assert counterspell["decks"] == [
+        {"id": pile, "name": "Blue Pile", "count": 1, "current": True},
+        {"id": keen, "name": "Keen Engineering", "count": 1, "current": False},
+    ]
+
+    # Cards page: copies in two decks merge, each deck with its own count.
+    cards = payloads("/cards", view="list")
+    assert cards["Sol Ring"]["decks"] == [
+        {"id": keen, "name": "Keen Engineering", "count": 1, "current": True},
+        {"id": reign, "name": "Reign of Dragons", "count": 1, "current": True},
+    ]
+    assert [d["count"] for d in cards["Island"]["decks"]] == [34]

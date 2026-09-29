@@ -2,7 +2,7 @@
 {% set active = "decks" %}
 {% block title %}{{ deck.name }}{% endblock %}
 {% import "_card_tiles.html" as cards with context %}
-{% block body_class %}with-panel{% endblock %}
+{% block body_class %}with-panel wide{% endblock %}
 {% block panel %}{% include "_card_panel.html" %}{% endblock %}
 {% block content %}
 <p><a href="/decks">← Decks</a></p>
@@ -36,10 +36,7 @@
 <p><span class="tag ok">assembled</span> Every card on the list is in the deck.</p>
 {% endif %}
 
-<div class="section-head">
-  <h2>Decklist</h2>
-  {{ cards.view_toggle(view, "/decks/" ~ deck.id) }}
-</div>
+<h2>Decklist</h2>
 {% include "_flash.html" %}
 {% if deck.format == "Commander" %}
 <details class="commander-picker"{% if not deck.commander %} open{% endif %}>
@@ -67,36 +64,27 @@
   {% endif %}
 </details>
 {% endif %}
+{% if groups %}{% include "_deck_breakdown.html" %}{% endif %}
 {% if not groups %}
 <p class="empty">This deck's list is empty.</p>
-{% elif view == "list" %}
-<div class="table-wrap">
-<table>
-  <thead><tr><th class="num">Qty</th><th>Card</th><th>Printing</th><th>Finish</th><th>Where</th><th class="num">Cost basis</th></tr></thead>
-  <tbody>
-  {% for g in groups %}
-    <tr data-card='{{ cards.panel_json(g, "deck") }}' tabindex="0">
-      <td class="num">{{ g.qty }}</td>
-      <td class="name">{{ g.card_name }}{% if g.needs_input %} <a class="tag warn" href="/printings/{{ g.lot_id }}">needs printing</a>{% endif %}</td>
-      <td>{% if g.set_code %}{{ g.set_code | upper }} #{{ g.collector_number }}{% else %}<a class="subtle" href="/printings/{{ g.lot_id }}">pick…</a>{% endif %}</td>
-      <td>{{ g.finish }}</td>
-      <td>
-        {% if g.equipped %}<span class="tag ok">here</span>
-        {% elif g.current_deck_id is not none %}<span class="tag away">in <a href="/decks/{{ g.current_deck_id }}">{{ g.current_deck_name }}</a></span>
-        {% else %}<span class="tag">unassigned</span>{% endif %}
-      </td>
-      <td class="num">{{ g.cost_cents | money }}</td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-</div>
 {% else %}
-{% for label, section_groups, count in sections %}
-<h3>{{ label }} <span class="subtle">({{ count }})</span></h3>
-<div class="tile-grid">
-  {% for g in section_groups %}{{ cards.tile(g, "deck") }}{% endfor %}
+<div class="catalog">
+  {{ cards.facet_sidebar("/decks/" ~ deck.id, filters, view, facets) }}
+  <div class="results">
+    {{ cards.results_bar(filters, view, shown_count, list_count, filters.href("/decks/" ~ deck.id), filters.href("/decks/" ~ deck.id, view="list")) }}
+    {% if not sections %}
+    <p class="empty">No cards in this deck match these filters.</p>
+    {% elif view == "list" %}
+    {{ cards.list_columns(sections, "deck") }}
+    {% else %}
+    {% for label, section_groups, count in sections %}
+    <h3>{{ label }} <span class="subtle">({{ count }})</span></h3>
+    <div class="tile-grid">
+      {% for g in section_groups %}{{ cards.tile(g, "deck") }}{% endfor %}
+    </div>
+    {% endfor %}
+    {% endif %}
+  </div>
 </div>
-{% endfor %}
 {% endif %}
 {% endblock %}

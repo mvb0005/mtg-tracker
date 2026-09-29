@@ -6,6 +6,8 @@
 #   deploy/minikube.sh pull-db [DB]       copy the pod's DB back to a local file (old one kept as a backup)
 #   deploy/minikube.sh import FILE.order  run `mtg import-order` inside the pod against the cluster DB
 #   deploy/minikube.sh forward [PORT]     port-forward the UI to http://127.0.0.1:PORT (default 8000), reconnecting across redeploys
+#   deploy/minikube.sh tunnel             expose the app via Cloudflare Tunnel (token from stdin, .env, or a prompt)
+#   deploy/minikube.sh tunnel-down        stop the tunnel connector and delete its token
 #   deploy/minikube.sh down               delete the app but keep the data volume
 #   deploy/minikube.sh destroy            delete everything, including the data volume
 set -euo pipefail
@@ -16,6 +18,20 @@ NS=mtgtracker
 IMAGE=mtgtracker:dev
 DATA=/data
 KUBECTL=(kubectl --namespace "$NS")
+
+# Value of KEY from the repo's .env (gitignored). The file is parsed, never
+# sourced/executed: optional "export", surrounding quotes and whitespace are
+# stripped. Empty if unset.
+env_value() {
+  [[ -f .env ]] || return 0
+  local v
+  v=$(sed -n "s/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$1[[:space:]]*=[[:space:]]*//p" .env | tail -n 1 | tr -d '\r')
+  v=${v%"${v##*[![:space:]]}"}
+  if [[ ${#v} -ge 2 && ( $v == \"*\" || $v == \'*\' ) ]]; then
+    v=${v:1:${#v}-2}
+  fi
+  printf '%s' "$v"
+}
 
 pod() {
   "${KUBECTL[@]}" get pod -l app=mtgtracker -o jsonpath='{.items[0].metadata.name}'
@@ -109,6 +125,44 @@ cmd_forward() {
   done
 }
 
+cmd_tunnel() {
+  # The token is read from stdin (piped, or typed at a hidden prompt) and
+  # handed to kubectl on stdin, so it never appears in argv, shell history,
+  # or any file in the repo.
+  local token=""
+  if [[ ! -t 0 ]]; then
+    read -r token || true  # piped in; no trailing newline is fine
+  fi
+  if [[ -z $token ]]; then
+    token=$(env_value CLOUDFLARE_TUNNEL_TOKEN)
+  fi
+  if [[ -z $token && -t 0 ]]; then
+    read -rsp "Cloudflare tunnel token: " token
+    echo
+  fi
+  if [[ -z $token ]]; then
+    echo "no token given. Set CLOUDFLARE_TUNNEL_TOKEN in .env (see .env.example), pipe it in," >&2
+    echo "or run this in a terminal to get a hidden prompt." >&2
+    exit 1
+  fi
+
+  printf '%s' "$token" \
+    | "${KUBECTL[@]}" create secret generic cloudflared-token --from-file=token=/dev/stdin \
+      --dry-run=client -o yaml \
+    | kubectl apply -f -
+  unset token
+  kubectl apply -k deploy/k8s/tunnel
+  # Pick up a changed token.
+  "${KUBECTL[@]}" rollout restart deployment/cloudflared
+  "${KUBECTL[@]}" rollout status deployment/cloudflared --timeout=120s
+  echo "Tunnel connector running. Check it with: kubectl -n $NS logs deploy/cloudflared"
+}
+
+cmd_tunnel_down() {
+  kubectl delete -k deploy/k8s/tunnel --ignore-not-found
+  "${KUBECTL[@]}" delete secret cloudflared-token --ignore-not-found
+}
+
 cmd_down() {
   "${KUBECTL[@]}" delete deployment/mtgtracker service/mtgtracker --ignore-not-found
 }
@@ -123,7 +177,9 @@ case ${1:-} in
   pull-db) shift; cmd_pull_db "$@" ;;
   import) shift; cmd_import "$@" ;;
   forward) shift; cmd_forward "$@" ;;
+  tunnel) cmd_tunnel ;;
+  tunnel-down) cmd_tunnel_down ;;
   down) cmd_down ;;
   destroy) cmd_destroy ;;
-  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

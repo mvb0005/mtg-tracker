@@ -1,0 +1,68 @@
+# Cloudflare Tunnel connector for mtgtracker. Remotely managed: the tunnel and
+# its public hostname live in the Cloudflare dashboard; this pod only needs
+# the tunnel token (Secret cloudflared-token, key "token"), which
+# `deploy/minikube.sh tunnel` creates from stdin -- never commit it.
+#
+# In the dashboard, point the public hostname's service at:
+#   http://mtgtracker.mtgtracker.svc.cluster.local:80
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  labels:
+    app: cloudflared
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.5.0
+          args:
+            - tunnel
+            - --no-autoupdate
+            - --metrics
+            - 0.0.0.0:2000
+            - run
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflared-token
+                  key: token
+          ports:
+            - name: metrics
+              containerPort: 2000
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: metrics
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: metrics
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            failureThreshold: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 128Mi

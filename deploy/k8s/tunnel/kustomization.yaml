@@ -1,0 +1,7 @@
+# Optional: the Cloudflare Tunnel connector. Applied by `deploy/minikube.sh
+# tunnel`, not by `up`, since it needs a token Secret first.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mtgtracker
+resources:
+  - cloudflared.yaml

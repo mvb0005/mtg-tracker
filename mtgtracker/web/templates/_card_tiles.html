@@ -2,6 +2,8 @@
 {% macro panel_json(c, mode) -%}
 {%- if mode == "deck" -%}
   {%- set where = "In this deck" if c.equipped else ("Lent to " ~ c.current_deck_name if c.current_deck_id is not none else "Not in any deck") -%}
+{%- elif c.where is defined -%}
+  {%- set where = c.where -%}
 {%- else -%}
   {%- set where = (c.disposition_type | capitalize) if c.disposition_type else (c.current_deck_name or "Not in any deck") -%}
 {%- endif -%}
@@ -13,10 +15,11 @@
   "rarity": c.art.rarity,
   "set_name": c.art.set_name,
   "artist": c.art.artist,
-  "printing": (c.set_code | upper ~ " #" ~ c.collector_number) if c.set_code else none,
+  "printing": c.printing if c.printing is defined else ((c.set_code | upper ~ " #" ~ c.collector_number) if c.set_code else none),
   "finish": c.finish,
   "qty": c.qty,
   "where": where,
+  "decks": c.decks if c.decks is defined else [],
   "cost": c.cost_cents | money,
 } | tojson }}
 {%- endmacro %}
@@ -26,7 +29,7 @@
     deck (or in none); on the cards page, one that's been sold/traded/lost.
     Where it actually is shows in the hover panel. -#}
 {%- set away = (not c.equipped) if mode == "deck" else c.disposition_type -%}
-<figure class="tile{% if c.finish != 'nonfoil' %} foil{% endif %}{% if away %} away{% endif %}" data-card='{{ panel_json(c, mode) }}' tabindex="0">
+<figure class="tile{% if c.finish in ('foil', 'etched') %} foil{% endif %}{% if away %} away{% endif %}" data-card='{{ panel_json(c, mode) }}' tabindex="0">
   <div class="tile-art">
     {% if c.art.image %}
       <img src="{{ c.art.image }}" alt="{{ c.card_name }}" loading="lazy" referrerpolicy="no-referrer">
@@ -34,7 +37,7 @@
       <div class="tile-placeholder"><span>{{ c.card_name }}</span></div>
     {% endif %}
     {% if c.qty > 1 %}<span class="tile-qty">{{ c.qty }}×</span>{% endif %}
-    {% if c.finish != "nonfoil" %}<span class="tile-finish">{{ c.finish }}</span>{% endif %}
+    {% if c.finish in ("foil", "etched") %}<span class="tile-finish">{{ c.finish }}</span>{% endif %}
     {% if not c.set_code and c.card_name not in basic_names %}
       <a class="tile-flag" href="/printings/{{ c.lot_id }}">needs printing</a>
     {% endif %}
@@ -43,9 +46,102 @@
 </figure>
 {% endmacro %}
 
-{% macro view_toggle(view, base_url) %}
+{% macro list_columns(sections, mode) %}
+{#- List view: two columns of type sections; qty, name and mana cost per row.
+    Printing, location and cost live in the hover panel. Greyed-out rows
+    follow the tiles: not in this deck ("deck"), or disposed of ("cards"). -#}
+<div class="deck-columns">
+  {% for label, rows, count in sections %}
+  <section class="deck-section">
+    <header class="deck-section-head">
+      <h3>{{ label }}</h3>
+      <span>{{ count }} card{{ "s" if count != 1 }}</span>
+    </header>
+    <ul class="deck-rows">
+      {% for c in rows %}
+      {%- set away = (not c.equipped) if mode == "deck" else c.disposition_type -%}
+      <li class="deck-row{% if away %} away{% endif %}" data-card='{{ panel_json(c, mode) }}' tabindex="0">
+        <span class="deck-row-qty">{{ c.qty }}</span>
+        <span class="deck-row-name">{{ c.card_name }}
+          {%- if not c.set_code and c.card_name not in basic_names %} <a class="tag warn" href="/printings/{{ c.lot_id }}">needs printing</a>{% endif %}
+          {%- if away %}<span class="visually-hidden"> (not here)</span>{% endif %}</span>
+        <span class="deck-row-cost">{{ c.art.faces[0].mana_cost | mana_symbols if c.art.faces }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endfor %}
+</div>
+{% endmacro %}
+
+{% macro view_toggle(view, images_url, list_url) %}
 <nav class="view-toggle" aria-label="View">
-  <a href="{{ base_url }}" {% if view != "list" %}aria-current="page"{% endif %}>Images</a>
-  <a href="{{ base_url }}{{ '&' if '?' in base_url else '?' }}view=list" {% if view == "list" %}aria-current="page"{% endif %}>List</a>
+  <a href="{{ images_url }}" {% if view != "list" %}aria-current="page"{% endif %}>Images</a>
+  <a href="{{ list_url }}" {% if view == "list" %}aria-current="page"{% endif %}>List</a>
 </nav>
+{% endmacro %}
+
+{% macro facet(name, title, options, selected, counts, mode=none) %}
+<fieldset class="facet">
+  <legend>{{ title }}</legend>
+  {% if mode is not none %}
+  {#- Any (OR) / All (AND) for this facet's ticked options. -#}
+  <div class="facet-mode" role="radiogroup" aria-label="{{ title }} match">
+    {% for key, label in color_modes.items() %}
+    <label><input type="radio" name="{{ name }}_mode" value="{{ key }}"{% if mode == key %} checked{% endif %}><span>{{ label }}</span></label>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% for key, label in options.items() %}
+  {%- set n = counts.get(key, 0) %}
+  <label class="facet-option{% if not n and key not in selected %} empty{% endif %}">
+    <input type="checkbox" name="{{ name }}" value="{{ key }}"{% if key in selected %} checked{% endif %}>
+    <span class="facet-label">{{ label }}</span>
+    <span class="facet-count">{{ n }}</span>
+  </label>
+  {% endfor %}
+</fieldset>
+{% endmacro %}
+
+{% macro facet_sidebar(action, filters, view, facets, q=none, deck_options=none) %}
+{#- Shop-style sidebar. A GET form: without JS the Apply button submits it;
+    filters.js submits on every change and drops empty params. On narrow
+    screens the sidebar is a "Filters" disclosure, folded by default. The Sort select
+    lives in the results bar but belongs to this form (form="facet-form"). -#}
+<details class="facets" open data-facets>
+  <summary>Filters{% if filters.active_count %} <span class="facets-count">{{ filters.active_count }}</span>{% endif %}</summary>
+  <form id="facet-form" class="facet-form" method="get" action="{{ action }}" data-autosubmit>
+    {% if q is not none %}
+    <input class="filter-search" type="search" name="q" value="{{ q }}" placeholder="Search card names" aria-label="Search card names">
+    {% endif %}
+    {% if view == "list" %}<input type="hidden" name="view" value="list">{% endif %}
+    {{ facet("color", "Color", colors, filters.color, facets.color, mode=filters.color_mode) }}
+    {{ facet("type", "Type", type_options, filters.type, facets.type) }}
+    {{ facet("mv", "Mana value", mana_values, filters.mv, facets.mv) }}
+    {% if deck_options is not none %}{{ facet("deck", "Deck", deck_options, filters.deck, facets.deck) }}{% endif %}
+    <div class="facet-actions">
+      <button type="submit" class="filter-apply">Apply</button>
+      {% if filters.active or q %}<a href="{{ filters.cleared().href(action, view=('list' if view == 'list' else none)) }}">Clear all</a>{% endif %}
+    </div>
+  </form>
+</details>
+{#- Inline and immediately after the sidebar so phones fold it before first
+    paint (no flash of an open sidebar). The "Filters" badge shows how many
+    are active. Without JS it simply stays open. -#}
+<script>if (matchMedia("(max-width: 899px)").matches) document.currentScript.previousElementSibling.open = false;</script>
+<script src="{{ url_for('static', path='filters.js') }}?v={{ static_version('filters.js') }}" defer></script>
+{% endmacro %}
+
+{% macro results_bar(filters, view, shown, total, images_url, list_url, q=none) %}
+<div class="results-bar">
+  <span class="subtle">
+    {%- if filters.active or q %}Showing {{ shown }} of {{ total }} cards{% else %}{{ total }} card{{ "s" if total != 1 }}{% endif -%}
+  </span>
+  <label class="results-sort">Sort
+    <select name="sort" form="facet-form">
+      {% for key, label in sorts.items() %}<option value="{{ key }}"{% if filters.sort == key %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </label>
+  {{ view_toggle(view, images_url, list_url) }}
+</div>
 {% endmacro %}

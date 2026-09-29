@@ -33,8 +33,29 @@ deploy/minikube.sh destroy             # remove everything, data included
 ```
 
 Everything lives in the `mtgtracker` namespace. The Service is ClusterIP-only
-and reached through port-forward, so nothing is exposed beyond this machine.
-Your database and receipts are never baked into the image.
+and reached through port-forward, so nothing is exposed beyond this machine
+unless you turn on the Cloudflare Tunnel below. Your database and receipts are
+never baked into the image.
+
+### Exposing it with Cloudflare Tunnel (optional)
+
+**This makes the site public with no login.** Anyone with the URL can see your
+purchases (totals, order numbers, payment method) and change printings and
+commanders. To lock it down later, add a Cloudflare Access policy for the
+hostname in the Zero Trust dashboard; nothing in the app needs to change.
+
+1. In the Cloudflare dashboard, go to **Zero Trust → Networks → Tunnels**,
+   create a tunnel (connector type *Cloudflared*), and copy its token.
+2. Add a **public hostname** to that tunnel, e.g. `mtg.example.com`, with
+   service type **HTTP** and URL `mtgtracker.mtgtracker.svc.cluster.local:80`.
+3. Copy `.env.example` to `.env` (gitignored, and excluded from the image),
+   set `CLOUDFLARE_TUNNEL_TOKEN=` to the token, then run
+   `deploy/minikube.sh tunnel`. The token can also be piped in, or typed at a
+   hidden prompt when run in a terminal. In the cluster it's stored only as a
+   Kubernetes Secret.
+
+`deploy/minikube.sh tunnel-down` stops the connector and deletes the token.
+The tunnel only runs while minikube does.
 
 The cluster keeps its own copy of the database on a persistent volume,
 separate from the local `data/mtgtracker.db`. Printings you pick in the UI and

@@ -64,6 +64,16 @@ def cache_dir(tmp_path, monkeypatch):
     return path
 
 
+@pytest.fixture
+def client(db_path, cache_dir):
+    """Web app over a copy of the seeded DB, with the fixture Scryfall cache."""
+    from fastapi.testclient import TestClient
+
+    from mtgtracker.web.app import create_app
+
+    return TestClient(create_app(db_path))
+
+
 def install_transport(monkeypatch, transport: httpx.BaseTransport) -> None:
     """Make scryfall.py's httpx.Client use `transport` (replacing any
     transport installed earlier in the same test)."""

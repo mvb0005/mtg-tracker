@@ -3,6 +3,7 @@
 data/
 receipts/
 .claude/
+.env
 .git/
 .venv/
 venv/

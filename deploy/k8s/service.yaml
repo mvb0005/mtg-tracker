@@ -1,5 +1,6 @@
-# ClusterIP only -- reach it with `deploy/minikube.sh forward`. No NodePort or
-# Ingress: this is a single-user, local-only app.
+# ClusterIP only -- reach it locally with `deploy/minikube.sh forward`, or
+# publicly through the optional Cloudflare Tunnel (deploy/k8s/tunnel/). No
+# NodePort or Ingress.
 apiVersion: v1
 kind: Service
 metadata:

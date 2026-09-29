@@ -46,5 +46,5 @@ extend-exclude = [".scryfall_cache"]
 select = ["E", "F", "I", "B", "UP", "SIM", "C4", "PT", "RUF"]
 
 [tool.ruff.lint.flake8-bugbear]
-# typer/FastAPI's documented idiom is Argument/Option/Depends as parameter defaults.
-extend-immutable-calls = ["typer.Argument", "typer.Option", "fastapi.Depends"]
+# typer/FastAPI's documented idiom is Argument/Option/Depends/Query as parameter defaults.
+extend-immutable-calls = ["typer.Argument", "typer.Option", "fastapi.Depends", "fastapi.Query"]

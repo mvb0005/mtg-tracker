@@ -2,48 +2,23 @@
 {% set active = "cards" %}
 {% block title %}Cards{% endblock %}
 {% import "_card_tiles.html" as cards with context %}
-{% block body_class %}with-panel{% endblock %}
+{% block body_class %}with-panel wide{% endblock %}
 {% block panel %}{% include "_card_panel.html" %}{% endblock %}
 {% block content %}
 <h1>Cards</h1>
-<form class="search" method="get" action="/cards">
-  <input type="search" name="q" value="{{ q }}" placeholder="Filter by card name" aria-label="Filter by card name">
-  {% if view == "list" %}<input type="hidden" name="view" value="list">{% endif %}
-  <button type="submit">Search</button>
-</form>
-<div class="section-head">
-  <p class="subtle">{{ card_rows | sum(attribute="qty") }} card{{ "s" if card_rows | sum(attribute="qty") != 1 }}{% if q %} matching "{{ q }}"{% endif %}</p>
-  {{ cards.view_toggle(view, "/cards" ~ ("?q=" ~ (q | urlencode) if q else "")) }}
+<div class="catalog">
+  {{ cards.facet_sidebar("/cards", filters, view, facets, q=q, deck_options=deck_options) }}
+  <div class="results">
+    {{ cards.results_bar(filters, view, shown, total, filters.href("/cards", q=q), filters.href("/cards", q=q, view="list"), q=q) }}
+    {% if not card_rows %}
+    <p class="empty">{% if q or filters.active %}No cards match these filters.{% else %}No cards yet.{% endif %}</p>
+    {% elif view == "list" %}
+    {{ cards.list_columns(sections, "cards") }}
+    {% else %}
+    <div class="tile-grid">
+      {% for c in card_rows %}{{ cards.tile(c, "cards") }}{% endfor %}
+    </div>
+    {% endif %}
+  </div>
 </div>
-{% if card_rows and view != "list" %}
-<div class="tile-grid">
-  {% for c in card_rows %}{{ cards.tile(c, "cards") }}{% endfor %}
-</div>
-{% else %}
-<div class="table-wrap">
-{% if card_rows %}
-<table>
-  <thead><tr><th class="num">Qty</th><th>Card</th><th>Printing</th><th>Finish</th><th>Where</th><th class="num">Cost basis</th></tr></thead>
-  <tbody>
-  {% for c in card_rows %}
-    <tr data-card='{{ cards.panel_json(c, "cards") }}' tabindex="0">
-      <td class="num">{{ c.qty }}</td>
-      <td class="name">{{ c.card_name }}</td>
-      <td>{% if c.set_code %}{{ c.set_code | upper }} #{{ c.collector_number }}{% else %}<span class="subtle">—</span>{% endif %}</td>
-      <td>{{ c.finish }}</td>
-      <td>
-        {% if c.disposition_type %}<span class="tag">{{ c.disposition_type }}</span>
-        {% elif c.current_deck_id is not none %}<a href="/decks/{{ c.current_deck_id }}">{{ c.current_deck_name }}</a>
-        {% else %}<span class="subtle">unassigned</span>{% endif %}
-      </td>
-      <td class="num">{{ c.cost_cents | money }}</td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<p class="empty">{% if q %}No cards match "{{ q }}".{% else %}No cards yet.{% endif %}</p>
-{% endif %}
-</div>
-{% endif %}
 {% endblock %}
