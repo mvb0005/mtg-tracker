@@ -29,9 +29,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 
-from mtgtracker import cardinfo, commanders, db, deckmods, printings, scryfall
+from mtgtracker import cardinfo, commanders, db, deckmods, printings, scryfall, users
 from mtgtracker.cardinfo import BASIC_LAND_NAMES, SECTION_ORDER
 from mtgtracker.web import filters, queries
+from mtgtracker.web.auth import DEV_COOKIE, AccessVerifier, AuthConfig, NotSignedIn
+from mtgtracker.web.auth import resolve as resolve_user
 
 SET_CODE_RE = re.compile(r"^[a-z0-9]{2,8}$")
 
@@ -121,7 +123,12 @@ templates.env.globals["mana_values"] = filters.MANA_VALUES
 templates.env.globals["color_modes"] = filters.COLOR_MODES
 
 
-def create_app(db_path: str | Path) -> FastAPI:
+def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_client=None) -> FastAPI:
+    """The web app over db_path. `auth` defaults to AuthConfig.from_env()
+    (MTG_AUTH etc.); tests pass one, plus a fake `jwks_client` for
+    cloudflare mode."""
+    auth = auth or AuthConfig.from_env()
+    verifier = AccessVerifier(auth, jwks_client) if auth.mode == "cloudflare" else None
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = db.connect(db_path)
@@ -139,11 +146,41 @@ def create_app(db_path: str | Path) -> FastAPI:
             conn.close()
 
     def render(request: Request, template: str, status_code: int = 200, **context) -> HTMLResponse:
+        context.setdefault("user", getattr(request.state, "user", None))
+        context.setdefault("can_edit", True)
+        context.setdefault("auth_mode", auth.mode)
         return templates.TemplateResponse(request, template, context, status_code=status_code)
 
     def redirect(path: str, **params: str) -> RedirectResponse:
         query = urlencode({k: v for k, v in params.items() if v})
         return RedirectResponse(f"{path}?{query}" if query else path, status_code=303)
+
+    @app.middleware("http")
+    async def identify(request: Request, call_next):
+        """Who's asking (web/auth.py), as request.state.user. Static files
+        need no identity."""
+        if not request.url.path.startswith("/static/"):
+            conn = db.connect(db_path, check_same_thread=False)
+            try:
+                request.state.user = resolve_user(
+                    conn, auth, verifier, client_host=request.client.host if request.client else None,
+                    headers=request.headers, cookies=request.cookies,
+                )
+            except NotSignedIn as exc:
+                return HTMLResponse(
+                    templates.get_template("signed_out.html").render(reason=str(exc)), status_code=401
+                )
+            finally:
+                conn.close()
+        return await call_next(request)
+
+    if auth.mode == "dev":
+        @app.get("/dev/as/{user_id}")
+        def dev_as(user_id: int):
+            """Local multi-user testing only: act as another user."""
+            response = RedirectResponse("/", status_code=303)
+            response.set_cookie(DEV_COOKIE, str(user_id), httponly=True, samesite="lax")
+            return response
 
     @app.middleware("http")
     async def static_cache_headers(request: Request, call_next):
@@ -165,26 +202,60 @@ def create_app(db_path: str | Path) -> FastAPI:
                 return PlainTextResponse("Cross-origin request rejected", status_code=403)
         return await call_next(request)
 
+    # --- who may do what -----------------------------------------------------
+    # Friends can view each other's decks and cards; only an owner changes
+    # their own. Every write path runs these guards on every id it's given,
+    # so a posted deck_id or lot_id that isn't yours is a 403, never a quiet
+    # way to take someone's card.
+
+    def me(request: Request) -> users.User:
+        return request.state.user
+
+    def load_deck(conn: sqlite3.Connection, deck_id: int) -> sqlite3.Row:
+        deck = conn.execute("SELECT * FROM decks WHERE id = ?", (deck_id,)).fetchone()
+        if deck is None:
+            raise HTTPException(status_code=404, detail="No such deck")
+        return deck
+
+    def require_own_deck(conn: sqlite3.Connection, deck_id: int, user: users.User) -> sqlite3.Row:
+        deck = load_deck(conn, deck_id)
+        if deck["owner_id"] != user.id:
+            raise HTTPException(status_code=403, detail="That isn't your deck")
+        return deck
+
+    def require_own_lot(conn: sqlite3.Connection, lot_id: int | None, user: users.User) -> None:
+        if lot_id is None:
+            return
+        lot = conn.execute("SELECT owner_id FROM lots WHERE id = ?", (lot_id,)).fetchone()
+        if lot is None:
+            raise HTTPException(status_code=404, detail="No such card")
+        if lot["owner_id"] != user.id:
+            raise HTTPException(status_code=403, detail="That card isn't yours")
+
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+        user = me(request)
         return render(
             request, "dashboard.html",
-            stats=queries.dashboard_stats(conn),
-            transactions=queries.list_transactions(conn)[:5],
-            decks=queries.list_decks(conn),
-            needs_input=queries.needs_input(conn),
+            stats=queries.dashboard_stats(conn, user.id),
+            transactions=queries.list_transactions(conn, user.id)[:5],
+            decks=queries.list_decks(conn, user.id),
+            needs_input=queries.needs_input(conn, user.id),
         )
 
     @app.get("/transactions", response_class=HTMLResponse)
     def transactions(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-        return render(request, "transactions.html", transactions=queries.list_transactions(conn))
+        return render(
+            request, "transactions.html", transactions=queries.list_transactions(conn, me(request).id)
+        )
 
     @app.get("/transactions/{transaction_id}", response_class=HTMLResponse)
     def transaction_detail(
         transaction_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ):
         detail = queries.get_transaction(conn, transaction_id)
-        if detail is None:
+        # Purchases are private: someone else's is simply not found.
+        if detail is None or detail["txn"]["owner_id"] != me(request).id:
             raise HTTPException(status_code=404, detail="No such transaction")
         return render(request, "transaction_detail.html", **detail)
 
@@ -192,7 +263,9 @@ def create_app(db_path: str | Path) -> FastAPI:
     def decks(
         request: Request, notice: str = "", error: str = "", conn: sqlite3.Connection = Depends(get_conn)
     ):
-        return render(request, "decks.html", decks=queries.list_decks(conn), notice=notice, error=error)
+        return render(
+            request, "decks.html", decks=queries.list_decks(conn, me(request).id), notice=notice, error=error
+        )
 
     @app.post("/decks/new")
     async def deck_new(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
@@ -201,7 +274,9 @@ def create_app(db_path: str | Path) -> FastAPI:
         if len(text) > 50_000:
             return redirect("/decks", error="That list is too long")
         try:
-            summary = deckmods.create_deck_from_list(conn, str(form.get("name", "")), text)
+            summary = deckmods.create_deck_from_list(
+                conn, str(form.get("name", "")), text, owner_id=me(request).id
+            )
         except deckmods.ChangeError as exc:
             return redirect("/decks", error=str(exc))
         except httpx.HTTPError:
@@ -218,21 +293,25 @@ def create_app(db_path: str | Path) -> FastAPI:
         card_filters = filters.CardFilters.parse(
             sort=sort, color=color, color_mode=color_mode, type=type, mv=mv
         )
-        detail = queries.get_deck(conn, deck_id, card_filters)
+        user = me(request)
+        detail = queries.get_deck(conn, deck_id, card_filters, viewer_id=user.id)
         if detail is None:
             raise HTTPException(status_code=404, detail="No such deck")
+        can_edit = detail["deck"]["owner_id"] == user.id
         commander_options = (
-            commanders.eligible(conn, deck_id) if detail["deck"]["format"] == "Commander" else []
+            commanders.eligible(conn, deck_id) if can_edit and detail["deck"]["format"] == "Commander" else []
         )
         return render(
             request, "deck_detail.html", view=view, notice=notice, error=error,
-            commander_options=commander_options, filters=card_filters, **detail,
+            commander_options=commander_options, filters=card_filters, can_edit=can_edit,
+            owner=users.get(conn, detail["deck"]["owner_id"]), **detail,
         )
 
     @app.post("/decks/{deck_id}/commander")
     async def deck_set_commander(
         deck_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ):
+        require_own_deck(conn, deck_id, me(request))
         form = await request.form()
         card_name = str(form.get("commander", "")).strip() or None
         try:
@@ -244,21 +323,23 @@ def create_app(db_path: str | Path) -> FastAPI:
         notice = f"{card_name} is now the commander." if card_name else "Commander cleared."
         return redirect(f"/decks/{deck_id}", notice=notice)
 
-    @app.get("/cards", response_class=HTMLResponse)
-    def cards(
-        request: Request, q: str = "", view: str = "",
-        sort: str = "", color: list[str] = Query([]), color_mode: str = "", type: list[str] = Query([]),
-        mv: list[str] = Query([]), deck: list[str] = Query([]),
-        conn: sqlite3.Connection = Depends(get_conn),
-    ):
-        decks = queries.list_decks(conn)
+    def collection_page(
+        request: Request, conn: sqlite3.Connection, owner: users.User, *, q, view, sort, color, color_mode,
+        type, mv, deck, action: str,
+    ) -> HTMLResponse:
+        """A user's collection (/cards for your own, /people/{id}/cards for a
+        friend's, read-only and without cost)."""
+        mine = owner.id == me(request).id
+        decks = queries.list_decks(conn, owner.id)
         card_filters = filters.CardFilters.parse(
             sort=sort, color=color, color_mode=color_mode, type=type, mv=mv, deck=deck,
             deck_ids={d["id"] for d in decks},
         )
         # Filter individual copies first (so a deck filter counts only that
         # deck's copies), then merge copies of the same card into one row.
-        copies = queries.search_cards(conn, q)
+        copies = queries.search_cards(conn, owner.id, q)
+        if not mine:
+            copies = [{**row, "cost_cents": None} for row in copies]
         matching = [row for row in copies if card_filters.matches(row)]
         card_rows = sorted(queries.collapse_by_name(matching), key=card_filters.sort_key)
         return render(
@@ -266,8 +347,71 @@ def create_app(db_path: str | Path) -> FastAPI:
             q=q, view=view, filters=card_filters, decks=decks,
             deck_options={**{str(d["id"]): d["name"] for d in decks}, filters.NO_DECK: "Not in a deck"},
             facets=card_filters.facet_counts(copies),
-            total=queries.count_cards(conn), shown=sum(r["qty"] for r in card_rows),
+            total=queries.count_cards(conn, owner.id), shown=sum(r["qty"] for r in card_rows),
+            owner=owner, can_edit=mine, action=action,
         )
+
+    @app.get("/cards", response_class=HTMLResponse)
+    def cards(
+        request: Request, q: str = "", view: str = "",
+        sort: str = "", color: list[str] = Query([]), color_mode: str = "", type: list[str] = Query([]),
+        mv: list[str] = Query([]), deck: list[str] = Query([]),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        return collection_page(request, conn, me(request), q=q, view=view, sort=sort, color=color,
+                               color_mode=color_mode, type=type, mv=mv, deck=deck, action="/cards")
+
+    # --- friends -------------------------------------------------------------
+
+    def load_person(conn: sqlite3.Connection, person_id: int) -> users.User:
+        person = users.get(conn, person_id)
+        if person is None:
+            raise HTTPException(status_code=404, detail="No such person")
+        return person
+
+    @app.get("/people", response_class=HTMLResponse)
+    def people(
+        request: Request, notice: str = "", error: str = "", conn: sqlite3.Connection = Depends(get_conn)
+    ):
+        rows = []
+        for person in users.list_users(conn):
+            rows.append({
+                "user": person,
+                "decks": len(queries.list_decks(conn, person.id)),
+                "cards": queries.count_cards(conn, person.id),
+            })
+        return render(request, "people.html", people=rows, notice=notice, error=error)
+
+    @app.post("/people")
+    async def people_add(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+        if not me(request).is_admin:
+            raise HTTPException(status_code=403, detail="Only an admin can add people")
+        form = await request.form()
+        try:
+            person = users.create(conn, str(form.get("display_name", "")), str(form.get("email", "")))
+        except users.UserError as exc:
+            return redirect("/people", error=str(exc))
+        return redirect("/people", notice=f"Added {person.display_name}.")
+
+    @app.get("/people/{person_id}", response_class=HTMLResponse)
+    def person_page(person_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+        person = load_person(conn, person_id)
+        return render(
+            request, "person.html", person=person, decks=queries.list_decks(conn, person.id),
+            card_count=queries.count_cards(conn, person.id),
+        )
+
+    @app.get("/people/{person_id}/cards", response_class=HTMLResponse)
+    def person_cards(
+        person_id: int, request: Request, q: str = "", view: str = "",
+        sort: str = "", color: list[str] = Query([]), color_mode: str = "", type: list[str] = Query([]),
+        mv: list[str] = Query([]), deck: list[str] = Query([]),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        person = load_person(conn, person_id)
+        return collection_page(request, conn, person, q=q, view=view, sort=sort, color=color,
+                               color_mode=color_mode, type=type, mv=mv, deck=deck,
+                               action=f"/people/{person.id}/cards")
 
     # --- deck modifications & versions ---------------------------------------
 
@@ -275,13 +419,12 @@ def create_app(db_path: str | Path) -> FastAPI:
         request: Request, conn: sqlite3.Connection, deck_id: int,
         *, q: str = "", notice: str = "", error: str = "", status_code: int = 200,
     ) -> HTMLResponse:
-        deck = conn.execute("SELECT * FROM decks WHERE id = ?", (deck_id,)).fetchone()
-        if deck is None:
-            raise HTTPException(status_code=404, detail="No such deck")
+        user = me(request)
+        deck = require_own_deck(conn, deck_id, user)
         # Display rows (same shape as the deck page's) so changes, the
         # replacement picker and search results render as readable card
         # tiles with the shared hover panel / tap sheet.
-        groups = queries.get_deck(conn, deck_id)["groups"]
+        groups = queries.get_deck(conn, deck_id, viewer_id=user.id)["groups"]
         by_name: dict[str, dict] = {}
         for group in groups:
             by_name.setdefault(group["card_name"], group)
@@ -371,11 +514,11 @@ def create_app(db_path: str | Path) -> FastAPI:
     ):
         return modify_page(request, conn, deck_id, q=q, notice=notice, error=error)
 
-    def change_action(deck_id: int, conn: sqlite3.Connection, action, notice: str, q: str = ""):
-        """Run a deck_changes edit; redirect back to the modify page with a
-        notice, or with the error if it was rejected."""
-        if conn.execute("SELECT 1 FROM decks WHERE id = ?", (deck_id,)).fetchone() is None:
-            raise HTTPException(status_code=404, detail="No such deck")
+    def change_action(deck_id: int, conn: sqlite3.Connection, action, notice: str, q: str = "",
+                      *, user: users.User):
+        """Run a deck_changes edit on the user's own deck; redirect back to
+        the modify page with a notice, or with the error if it was rejected."""
+        require_own_deck(conn, deck_id, user)
         try:
             result = action()
         except deckmods.ChangeError as exc:
@@ -390,15 +533,17 @@ def create_app(db_path: str | Path) -> FastAPI:
 
     @app.post("/decks/{deck_id}/changes")
     async def deck_add_change(deck_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+        user = me(request)
         form = await request.form()
         q = str(form.get("q", ""))
         lot_id = form_int(form.get("lot_id"))
         if lot_id is not None:
+            require_own_lot(conn, lot_id, user)
             return change_action(deck_id, conn, lambda: deckmods.add_owned(conn, deck_id, lot_id),
-                                 "Added to the change list.", q)
+                                 "Added to the change list.", q, user=user)
         name = str(form.get("planned_name", ""))
         return change_action(deck_id, conn, lambda: deckmods.add_planned(conn, deck_id, name),
-                             "Added to the change list as to acquire.", q)
+                             "Added to the change list as to acquire.", q, user=user)
 
     @app.post("/decks/{deck_id}/import")
     async def deck_import_list(deck_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
@@ -406,51 +551,61 @@ def create_app(db_path: str | Path) -> FastAPI:
         if len(text) > 50_000:
             return redirect(f"/decks/{deck_id}/modify", error="That list is too long")
         return change_action(deck_id, conn, lambda: deckmods.import_list(conn, deck_id, text).message(),
-                             "{result}")
+                             "{result}", user=me(request))
 
     @app.post("/decks/{deck_id}/changes/{change_id}/cut")
     async def deck_change_cut(
         deck_id: int, change_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ):
+        user = me(request)
         form = await request.form()
         cut, cut_want = form_int(form.get("cut_lot_id")), form_int(form.get("cut_want_id"))
+        require_own_lot(conn, cut, user)
         return change_action(
             deck_id, conn, lambda: deckmods.set_cut(conn, deck_id, change_id, cut, cut_want_id=cut_want),
-            "Replacement updated.",
+            "Replacement updated.", user=user,
         )
 
     @app.post("/decks/{deck_id}/swaps")
     async def deck_swap(deck_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         """Replace a card the deck lists but you don't own with one you do."""
+        user = me(request)
         form = await request.form()
         lot_id, want_id = form_int(form.get("lot_id")), form_int(form.get("want_id"))
         if lot_id is None or want_id is None:
+            require_own_deck(conn, deck_id, user)
             return redirect(
                 f"/decks/{deck_id}/modify", error="Pick a card to replace and one of yours to use"
             )
+        require_own_lot(conn, lot_id, user)
         return change_action(deck_id, conn, lambda: deckmods.add_swap(conn, deck_id, lot_id, want_id),
-                             "Queued the swap; apply to make it the next version.")
+                             "Queued the swap; apply to make it the next version.", user=user)
 
     @app.post("/decks/{deck_id}/changes/{change_id}/link")
     async def deck_change_link(
         deck_id: int, change_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ):
+        user = me(request)
         lot_id = form_int((await request.form()).get("lot_id"))
         if lot_id is None:
+            require_own_deck(conn, deck_id, user)
             return redirect(f"/decks/{deck_id}/modify", error="Pick a copy to use")
+        require_own_lot(conn, lot_id, user)
         return change_action(deck_id, conn, lambda: deckmods.link_owned(conn, deck_id, change_id, lot_id),
-                             "Linked your copy; the change is ready.")
+                             "Linked your copy; the change is ready.", user=user)
 
     @app.post("/decks/{deck_id}/changes/{change_id}/delete")
-    def deck_change_delete(deck_id: int, change_id: int, conn: sqlite3.Connection = Depends(get_conn)):
+    def deck_change_delete(
+        deck_id: int, change_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+    ):
         return change_action(deck_id, conn, lambda: deckmods.remove_change(conn, deck_id, change_id),
-                             "Removed from the change list.")
+                             "Removed from the change list.", user=me(request))
 
     @app.post("/decks/{deck_id}/apply")
     async def deck_apply(deck_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         note = str((await request.form()).get("note", ""))
         return change_action(deck_id, conn, lambda: deckmods.apply_changes(conn, deck_id, note),
-                             "Applied as version {result}.")
+                             "Applied as version {result}.", user=me(request))
 
     @app.get("/decks/{deck_id}/versions/{version}", response_class=HTMLResponse)
     def deck_version(
@@ -462,7 +617,8 @@ def create_app(db_path: str | Path) -> FastAPI:
         if lot_ids is None:
             raise HTTPException(status_code=404, detail="No such deck version")
         rows = queries.lots_as_rows(conn, lot_ids, where=f"On the v{version} list",
-                                    wants=deckmods.version_wants(conn, deck_id, version))
+                                    wants=deckmods.version_wants(conn, deck_id, version),
+                                    viewer_id=me(request).id)
         info = next(v for v in deckmods.versions(conn, deck_id) if v["version"] == version)
         return render(
             request, "deck_version.html", deck=deck, version=info,
@@ -476,7 +632,7 @@ def create_app(db_path: str | Path) -> FastAPI:
     ):
         return render(
             request, "printings.html",
-            groups=printings.unresolved_groups(conn),
+            groups=printings.unresolved_groups(conn, me(request).id),
             cached_sets=printings.cached_set_codes(),
             notice=notice,
         )
@@ -485,6 +641,7 @@ def create_app(db_path: str | Path) -> FastAPI:
         request: Request, conn: sqlite3.Connection, lot_id: int,
         *, notice: str = "", error: str = "", status_code: int = 200,
     ) -> HTMLResponse:
+        require_own_lot(conn, lot_id, me(request))
         group = printings.group_for_lot(conn, lot_id)
         if group is None:
             raise HTTPException(status_code=404, detail="No unresolved card with that id")
@@ -508,6 +665,7 @@ def create_app(db_path: str | Path) -> FastAPI:
     async def printing_assign(
         lot_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ):
+        require_own_lot(conn, lot_id, me(request))
         group = printings.group_for_lot(conn, lot_id)
         if group is None:
             raise HTTPException(status_code=404, detail="No unresolved card with that id")
@@ -533,9 +691,10 @@ def create_app(db_path: str | Path) -> FastAPI:
         return redirect("/printings", notice=notice)
 
     @app.post("/printings/{lot_id}/fetch-set")
-    async def printing_fetch_set(lot_id: int, request: Request):
+    async def printing_fetch_set(lot_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         """Explicit, user-initiated Scryfall lookup of a whole set (cached
         afterwards). Page loads never hit the network."""
+        require_own_lot(conn, lot_id, me(request))
         form = await request.form()
         set_code = str(form.get("set_code", "")).strip().lower()
         if not SET_CODE_RE.match(set_code):

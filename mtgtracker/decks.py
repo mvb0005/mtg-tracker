@@ -28,10 +28,11 @@ def create_deck(
     format: str = "Commander",
     notes: str | None = None,
     commander: str | None = None,
+    owner_id: int = 1,
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO decks (name, format, created_at, notes, commander) VALUES (?, ?, ?, ?, ?)",
-        (name, format, created_at, notes, commander),
+        "INSERT INTO decks (name, format, created_at, notes, commander, owner_id) VALUES (?, ?, ?, ?, ?, ?)",
+        (name, format, created_at, notes, commander, owner_id),
     )
     conn.commit()
     return cur.lastrowid

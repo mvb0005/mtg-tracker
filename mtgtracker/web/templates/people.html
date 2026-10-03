@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% set active = "people" %}
+{% block title %}Friends{% endblock %}
+{% block content %}
+<h1>Friends</h1>
+{% include "_flash.html" %}
+<p class="subtle">Everyone here can browse each other's decks and cards. Only owners change their own, and purchases and cost basis stay private.</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Name</th><th class="num">Decks</th><th class="num">Cards</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for p in people %}
+    <tr>
+      <td class="name"><a href="/people/{{ p.user.id }}">{{ p.user.display_name }}</a>{% if p.user.id == user.id %} <span class="subtle">(you)</span>{% endif %}</td>
+      <td class="num">{{ p.decks }}</td>
+      <td class="num">{{ p.cards }}</td>
+      <td>{% if p.user.is_admin %}<span class="tag">admin</span> {% endif %}{% if not p.user.signed_in and p.user.id != user.id %}<span class="tag">hasn't signed in</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% if user.is_admin %}
+<h2>Add a person</h2>
+<form class="import-form" method="post" action="/people">
+  <p class="subtle">They can sign in once their email is allowed in Cloudflare Access. Until they do, you can import their collection and act for them on borrow requests.</p>
+  <label class="field">Name <input type="text" name="display_name" required maxlength="80"></label>
+  <label class="field">Email (optional) <input type="email" name="email" maxlength="200"></label>
+  <button type="submit" class="primary">Add person</button>
+</form>
+{% endif %}
+{% endblock %}

@@ -96,13 +96,15 @@ def create_deck_from_seed(
     product_id: int,
     transaction_id: int,
     acquired_date: str,
+    owner_id: int = 1,
 ) -> int:
     """Creates the deck and one lot per physical card (resolved, ambiguous,
     not-found, and basics all get a lot -- only scryfall_id/set/collector
     differ), each equipped in the new deck. Returns the deck id.
     """
     deck_id = create_deck(
-        conn, seed["deck_name"], acquired_date, format=seed["format"], commander=seed["commander"]
+        conn, seed["deck_name"], acquired_date, format=seed["format"], commander=seed["commander"],
+        owner_id=owner_id,
     )
 
     def _add_lot(card_name: str, scryfall_id: str | None, set_code: str | None,
@@ -111,11 +113,11 @@ def create_deck_from_seed(
             """
             INSERT INTO lots (
                 product_id, transaction_id, scryfall_id, card_name, set_code,
-                collector_number, finish, acquired_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                collector_number, finish, acquired_date, owner_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (product_id, transaction_id, scryfall_id, card_name, set_code,
-             collector_number, finish, acquired_date),
+             collector_number, finish, acquired_date, owner_id),
         )
         add_to_deck(conn, deck_id, cur.lastrowid, equipped=True)
 
@@ -161,7 +163,7 @@ def seed_precon_deck_for_product(
         return None  # already seeded (or has lots from elsewhere) -- don't duplicate
 
     txn = conn.execute(
-        "SELECT created_at FROM transactions WHERE id = ?", (product["transaction_id"],)
+        "SELECT created_at, owner_id FROM transactions WHERE id = ?", (product["transaction_id"],)
     ).fetchone()
     acquired_date = txn["created_at"][:10]
 
@@ -176,6 +178,7 @@ def seed_precon_deck_for_product(
                 product_id=product_id,
                 transaction_id=product["transaction_id"],
                 acquired_date=acquired_date,
+                owner_id=txn["owner_id"],
             )
             return deck_id, report
 

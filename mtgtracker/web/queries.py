@@ -20,33 +20,38 @@ COMMANDER_SECTION = "Commander"
 _BASICS_SQL = ", ".join("?" for _ in BASIC_LAND_NAMES)
 
 
-def dashboard_stats(conn: sqlite3.Connection) -> dict:
+def dashboard_stats(conn: sqlite3.Connection, owner_id: int) -> dict:
+    """One user's totals: their purchases, the cards they own, their decks."""
     spend = conn.execute(
-        "SELECT COUNT(*) AS n, COALESCE(SUM(total_cents), 0) AS total FROM transactions"
+        "SELECT COUNT(*) AS n, COALESCE(SUM(total_cents), 0) AS total FROM transactions WHERE owner_id = ?",
+        (owner_id,),
     ).fetchone()
     cards = conn.execute(
-        "SELECT COUNT(*) FROM lots"
-        " WHERE NOT EXISTS (SELECT 1 FROM dispositions WHERE dispositions.lot_id = lots.id)"
+        "SELECT COUNT(*) FROM lots WHERE owner_id = ?"
+        " AND NOT EXISTS (SELECT 1 FROM dispositions WHERE dispositions.lot_id = lots.id)",
+        (owner_id,),
     ).fetchone()[0]
-    decks = conn.execute("SELECT COUNT(*) FROM decks").fetchone()[0]
+    decks = conn.execute("SELECT COUNT(*) FROM decks WHERE owner_id = ?", (owner_id,)).fetchone()[0]
     return {
         "transaction_count": spend["n"],
         "total_spent_cents": spend["total"],
         "card_count": cards,
         "deck_count": decks,
-        "needs_input_count": sum(row["qty"] for row in needs_input(conn)),
+        "needs_input_count": sum(row["qty"] for row in needs_input(conn, owner_id)),
     }
 
 
-def list_transactions(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+def list_transactions(conn: sqlite3.Connection, owner_id: int) -> list[sqlite3.Row]:
     return conn.execute(
         """
         SELECT transactions.*,
                (SELECT COUNT(*) FROM products WHERE products.transaction_id = transactions.id)
                    AS product_count
         FROM transactions
+        WHERE owner_id = ?
         ORDER BY created_at DESC, id DESC
-        """
+        """,
+        (owner_id,),
     ).fetchall()
 
 
@@ -74,7 +79,7 @@ def get_transaction(conn: sqlite3.Connection, transaction_id: int) -> dict | Non
     return {"txn": txn, "products": products, "receipts": receipts}
 
 
-def list_decks(conn: sqlite3.Connection) -> list[dict]:
+def list_decks(conn: sqlite3.Connection, owner_id: int) -> list[dict]:
     rows = conn.execute(
         """
         SELECT decks.*,
@@ -83,9 +88,11 @@ def list_decks(conn: sqlite3.Connection) -> list[dict]:
                (SELECT COUNT(*) FROM deck_wants WHERE deck_wants.deck_id = decks.id) AS wanted_count
         FROM decks
         LEFT JOIN deck_cards ON deck_cards.deck_id = decks.id
+        WHERE decks.owner_id = ?
         GROUP BY decks.id
         ORDER BY decks.id
-        """
+        """,
+        (owner_id,),
     ).fetchall()
     identities = deck_identities(conn)
     return [
@@ -129,11 +136,14 @@ def deck_identities(conn: sqlite3.Connection) -> dict[int, tuple[str, ...]]:
 
 
 def get_deck(
-    conn: sqlite3.Connection, deck_id: int, filters: CardFilters | None = None
+    conn: sqlite3.Connection, deck_id: int, filters: CardFilters | None = None,
+    *, viewer_id: int | None = None,
 ) -> dict | None:
     """The deck, its display groups, and `sections` for the grid/list views.
     `filters` narrows and orders only what's shown (sections); `groups`,
-    counts and the breakdown always cover the whole deck."""
+    counts and the breakdown always cover the whole deck. Money is private:
+    `viewer_id` sees cost only on lots they own, and the deck's cost basis
+    only on their own deck (None otherwise)."""
     filters = filters or CardFilters()
     deck = conn.execute("SELECT * FROM decks WHERE id = ?", (deck_id,)).fetchone()
     if deck is None:
@@ -152,7 +162,8 @@ def get_deck(
                MIN(lots.id) AS lot_id,
                GROUP_CONCAT(lots.id) AS lot_ids,
                MIN(lots.scryfall_id) AS scryfall_id,
-               SUM(lots.allocated_cost_cents) AS cost_cents
+               SUM(lots.allocated_cost_cents) AS cost_cents,
+               lots.owner_id AS lot_owner_id
         FROM deck_cards
         JOIN lots ON lots.id = deck_cards.lot_id
         LEFT JOIN deck_cards AS current
@@ -160,12 +171,16 @@ def get_deck(
         LEFT JOIN decks AS current_deck ON current_deck.id = current.deck_id
         WHERE deck_cards.deck_id = ?
         GROUP BY lots.card_name, lots.set_code, lots.collector_number, lots.finish,
-                 deck_cards.equipped, current.deck_id
+                 deck_cards.equipped, current.deck_id, lots.owner_id
         ORDER BY lots.card_name COLLATE NOCASE
         """,
         (*BASIC_LAND_NAMES, deck_id),
     ).fetchall()
-    owned = [{**g, "wanted": False} for g in _with_card_info(groups, conn)]
+    owned = [
+        {**g, "wanted": False, "mine": g["lot_owner_id"] == viewer_id,
+         "cost_cents": g["cost_cents"] if g["lot_owner_id"] == viewer_id else None}
+        for g in _with_card_info(groups, conn)
+    ]
     wanted = _wanted_rows(conn.execute(
         "SELECT card_name, scryfall_id, COUNT(*) AS qty FROM deck_wants WHERE deck_id = ?"
         " GROUP BY card_name, scryfall_id",
@@ -190,9 +205,9 @@ def get_deck(
 
     list_cost = conn.execute(
         "SELECT COALESCE(SUM(lots.allocated_cost_cents), 0) FROM deck_cards"
-        " JOIN lots ON lots.id = deck_cards.lot_id WHERE deck_cards.deck_id = ?",
-        (deck_id,),
-    ).fetchone()[0]
+        " JOIN lots ON lots.id = deck_cards.lot_id WHERE deck_cards.deck_id = ? AND lots.owner_id = ?",
+        (deck_id, viewer_id),
+    ).fetchone()[0] if viewer_id == deck["owner_id"] else None
 
     return {
         "deck": deck,
@@ -253,12 +268,14 @@ def _pull_groups(missing: list[dict], conn: sqlite3.Connection) -> list[dict]:
     ]
 
 
-def count_cards(conn: sqlite3.Connection) -> int:
-    """Every lot, disposed or not -- the cards page's unfiltered total."""
-    return conn.execute("SELECT COUNT(*) FROM lots").fetchone()[0]
+def count_cards(conn: sqlite3.Connection, owner_id: int) -> int:
+    """Every lot the user owns, disposed or not -- the cards page's unfiltered total."""
+    return conn.execute("SELECT COUNT(*) FROM lots WHERE owner_id = ?", (owner_id,)).fetchone()[0]
 
 
-def search_cards(conn: sqlite3.Connection, query: str = "") -> list[dict]:
+def search_cards(conn: sqlite3.Connection, owner_id: int, query: str = "") -> list[dict]:
+    """The user's own cards (never ones they've borrowed), one row per
+    printing/location, matching `query` by name."""
     rows = conn.execute(
         """
         SELECT lots.card_name, lots.set_code, lots.collector_number, lots.finish,
@@ -274,12 +291,12 @@ def search_cards(conn: sqlite3.Connection, query: str = "") -> list[dict]:
         LEFT JOIN deck_cards AS current ON current.lot_id = lots.id AND current.equipped = 1
         LEFT JOIN decks ON decks.id = current.deck_id
         LEFT JOIN dispositions ON dispositions.lot_id = lots.id
-        WHERE lots.card_name LIKE ? ESCAPE '\\'
+        WHERE lots.owner_id = ? AND lots.card_name LIKE ? ESCAPE '\\'
         GROUP BY lots.card_name, lots.set_code, lots.collector_number, lots.finish,
                  current.deck_id, dispositions.disposition_type
         ORDER BY lots.card_name COLLATE NOCASE
         """,
-        ("%" + _escape_like(query.strip()) + "%",),
+        (owner_id, "%" + _escape_like(query.strip()) + "%"),
     ).fetchall()
     return sorted(
         _with_card_info(rows, conn), key=lambda c: cardinfo.mana_value_order(c["card_name"], c["art"])
@@ -288,7 +305,7 @@ def search_cards(conn: sqlite3.Connection, query: str = "") -> list[dict]:
 
 def lots_as_rows(
     conn: sqlite3.Connection, lot_ids: list[int], *, where: str,
-    wants: list[tuple[str, str | None]] = (),
+    wants: list[tuple[str, str | None]] = (), viewer_id: int | None = None,
 ) -> list[dict]:
     """These lots grouped by card name as display rows (like search_cards,
     ordered by mana value), for showing a past deck version. `where` is the
@@ -305,11 +322,11 @@ def lots_as_rows(
         SELECT card_name, COUNT(*) AS qty, MIN(scryfall_id) AS scryfall_id, MIN(finish) AS finish,
                MIN(set_code) AS set_code, MIN(collector_number) AS collector_number,
                MIN(id) AS lot_id, GROUP_CONCAT(id) AS lot_ids,
-               SUM(allocated_cost_cents) AS cost_cents
+               SUM(CASE WHEN owner_id = ? THEN allocated_cost_cents END) AS cost_cents
         FROM lots WHERE id IN ({marks})
         GROUP BY card_name
         """,
-        tuple(lot_ids),
+        (viewer_id, *lot_ids),
     ).fetchall()
     result = []
     for row in _with_card_info(rows, conn):
@@ -432,20 +449,20 @@ def _merge_decks(copies: list[dict]) -> list[dict]:
     return sorted(merged.values(), key=lambda d: d["name"].casefold())
 
 
-def needs_input(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Non-basic lots with no resolved printing (ambiguous or not found
-    during precon seeding) -- the user has to check the physical card."""
+def needs_input(conn: sqlite3.Connection, owner_id: int) -> list[sqlite3.Row]:
+    """The user's non-basic lots with no resolved printing (ambiguous or not
+    found during precon seeding) -- they have to check the physical card."""
     return conn.execute(
         f"""
         SELECT lots.card_name, lots.finish, COUNT(*) AS qty,
                products.display_name AS product_name
         FROM lots
         LEFT JOIN products ON products.id = lots.product_id
-        WHERE lots.scryfall_id IS NULL AND lots.card_name NOT IN ({_BASICS_SQL})
+        WHERE lots.owner_id = ? AND lots.scryfall_id IS NULL AND lots.card_name NOT IN ({_BASICS_SQL})
         GROUP BY lots.card_name, lots.finish, lots.product_id
         ORDER BY lots.card_name COLLATE NOCASE
         """,
-        BASIC_LAND_NAMES,
+        (owner_id, *BASIC_LAND_NAMES),
     ).fetchall()
 
 

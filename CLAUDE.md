@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Personal, local-first, single-user MTG collection and spending tracker. A SQLite database is the source of truth for money and card ownership. It is deliberately not a deckbuilder or a card scanner. See README.md for the roadmap and the known gaps from the first real import.
+Personal, local-first MTG collection and spending tracker. A SQLite database is the source of truth for money and card ownership. It is deliberately not a deckbuilder or a card scanner. See README.md for the roadmap and the known gaps from the first real import.
 
 ## Commands
 
@@ -17,7 +17,9 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # setup
 .venv/bin/mtg import-order path/to/Order.order               # CLI (typer app in mtgtracker/cli.py)
 .venv/bin/mtg list-decks
 .venv/bin/mtg reassemble-deck <deck-id>
-.venv/bin/mtg serve [--db PATH] [--port 8000] [--reload]      # web UI, binds 127.0.0.1
+.venv/bin/mtg serve [--db PATH] [--port 8000] [--reload]      # web UI, binds 127.0.0.1 (MTG_AUTH=dev to try several users)
+.venv/bin/mtg add-user NAME [--email E] [--admin]            # users exist only if added (sign-in allowlist)
+.venv/bin/mtg rename-user 1 "Pat"                            # user 1 starts as "Owner"; import-order takes --user EMAIL|ID
 python scripts/scrub_order.py <in.order> <out.order>         # make a real .order safe to commit as a fixture
 deploy/minikube.sh up | load-db | pull-db | import FILE.order | forward [PORT] | down | destroy   # minikube (see below); forward reconnects across redeploys
 ```
@@ -107,6 +109,20 @@ Each bucket carries a CSS `fill` (`_fill`), which templates use as inline `backg
 **Card size:** the grid's `--tile-min` (190px) is the smallest readable card width. The grid drops a column rather than shrinking cards: 5 across when the results area is 1008px, 4 at 1600px with the panel showing. Phones use 140px for 2 columns.
 
 **Card details panel:** on wide screens with a mouse (`(hover: hover) and (min-width: 1480px)`), hovering or focusing a card shows a sticky detail panel on the right. Everywhere else, including phones, tablets, and narrow windows, tapping a card or pressing Enter/Space on it opens the same content in a modal `<dialog>` sheet (`#card-dialog`, a bottom sheet on phones). Taps on links and controls inside a card keep their normal behavior. Both are driven by `static/card-panel.js`, whose `render()` builds the content for either. In both, the Decks row lists every deck whose list has the card, as `1× Deck` links. When there's more than one deck, the one that holds the card is labeled current (`queries._decks_for`, merged by `_merge_decks` on `/cards`). The sheet animates: it slides up and down on phones, and lifts and fades on wider screens. The open animation is pure CSS. Closing adds `.closing` and waits for `animationend` before `dialog.close()`, and this covers Escape (`cancel`), backdrop taps, and swipe-down. There's no close button. On phones, dragging the sheet down once its content is scrolled to the top moves it with the finger. Release past about a third of its height, or flick faster than 0.5 px/ms, to close; otherwise it snaps back. Swiping sideways steps to the next or previous card, and so do the arrow keys in the sheet. The order is the page's `.tile[data-card]` or `.deck-row[data-card]` elements, so it follows the current sort and filters, and a position counter shows where you are. The first ~8px of movement decides between sideways and vertical. At either end of the list the sheet resists and springs back. It's instant under `prefers-reduced-motion`. When the pop-up has a card image, it hides the first face's repeated name, type, and rules text via CSS. Placeholder cards and double-faced backs keep their text, and the desktop panel always shows it. Every tile and list row carries `data-card='<json>'`, built by the `panel_json` macro in `_card_tiles.html` from `CardInfo` (faces, rarity, set, artist) plus the row's location and cost. The script builds DOM nodes with `textContent`, never `innerHTML`, and turns `{X}` into Scryfall mana-symbol SVGs. The panel's image slot has a fixed aspect ratio so the text doesn't jump while images load. Pages opt in with `{% block body_class %}with-panel{% endblock %}` plus the `panel` block.
+
+**Users and sign-in** (migration 0006, `mtgtracker/users.py`, `web/auth.py`):
+- **Ownership:** every lot, deck and transaction has `owner_id` (existing rows belong to user 1, the original owner and an admin). `lots.transaction_id` is nullable, so a card can exist without a recorded purchase.
+- **Auth mode** comes from `MTG_AUTH`: `single` (default; everyone is user 1, as before), `dev` (local only; `/dev/as/{id}` sets a cookie), or `cloudflare`.
+  - In `cloudflare` mode, the Access JWT (header or `CF_Authorization` cookie) is verified with RS256 against the team's keys, checking `aud` (`CF_ACCESS_AUD`), `iss` (`https://CF_ACCESS_TEAM_DOMAIN`) and `exp`.
+  - Its email must match an existing user: an allowlist, never auto-created. `MTG_OWNER_EMAIL` claims user 1 on its first sign-in.
+  - Loopback clients act as user 1 so port-forward works. That's only safe because uvicorn runs with `proxy_headers=False` and cloudflared runs in its own pod.
+  - Anything else gets the 401 `signed_out.html`. `/static/` needs no identity.
+- **Scoping:** `request.state.user` is set by the `identify` middleware. List queries take an `owner_id`.
+- **Visibility:** friends can view each other's decks, deck versions, `/people/{id}` and `/people/{id}/cards`, with `can_edit=False`, so there's no Modify, commander picker, printing links or cost-sort.
+  - Money stays private: someone else's lot shows cost `None`, a deck's cost basis shows only to its owner, and another user's transaction is a 404.
+- **Write guards:** every write route calls `require_own_deck` / `require_own_lot` on every id it's posted (403). `deckmods`' candidate and free-lot queries offer only the deck owner's lots, and `_check_insertable` refuses others' lots too.
+- **Acting for others:** `users.can_act_for` lets an admin act for someone who has never signed in. It's used by the coming loans phase.
+- **Admins:** an admin adds people at `/people`.
 
 **Commander:** `mtgtracker/commanders.py` lets any legendary creature on a Commander-format deck's list be its commander, checked against the cached type line. The deck page has the picker (`POST /decks/{id}/commander`). There is one commander per deck, with no partners. A middleware rejects POSTs whose `Origin` doesn't match `Host`, or that carry `Sec-Fetch-Site: cross-site`. Write routes use POST, then a 303 redirect, with the notice or error passed as a query param.
 

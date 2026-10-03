@@ -62,7 +62,7 @@
     {% if c.finish in ("foil", "etched") %}<span class="tile-finish">{{ c.finish }}</span>{% endif %}
     {% if c.wanted %}
       <span class="tile-flag acquire">To acquire</span>
-    {% elif not c.set_code and c.card_name not in basic_names %}
+    {% elif can_edit and c.mine is not false and not c.set_code and c.card_name not in basic_names %}
       <a class="tile-flag" href="/printings/{{ c.lot_id }}">needs printing</a>
     {% endif %}
   </div>
@@ -88,7 +88,7 @@
         <span class="deck-row-qty">{{ c.qty }}</span>
         <span class="deck-row-name">{{ c.card_name }}
           {%- if c.wanted %} <span class="tag acquire">to acquire</span>
-          {%- elif not c.set_code and c.card_name not in basic_names %} <a class="tag warn" href="/printings/{{ c.lot_id }}">needs printing</a>{% endif %}
+          {%- elif can_edit and c.mine is not false and not c.set_code and c.card_name not in basic_names %} <a class="tag warn" href="/printings/{{ c.lot_id }}">needs printing</a>{% endif %}
           {%- if away %}<span class="visually-hidden"> (not here)</span>{% endif %}</span>
         <span class="deck-row-cost">{{ c.art.faces[0].mana_cost | mana_symbols if c.art.faces }}</span>
       </li>
@@ -164,7 +164,7 @@
   </span>
   <label class="results-sort">Sort
     <select name="sort" form="facet-form">
-      {% for key, label in sorts.items() %}<option value="{{ key }}"{% if filters.sort == key %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      {% for key, label in sorts.items() if can_edit or key != "cost" %}<option value="{{ key }}"{% if filters.sort == key %} selected{% endif %}>{{ label }}</option>{% endfor %}
     </select>
   </label>
   {{ view_toggle(view, images_url, list_url) }}

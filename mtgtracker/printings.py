@@ -56,7 +56,7 @@ class Group:
 # Unresolved lots with their current (equipped) deck, if any.
 _UNRESOLVED_CTE = """
 WITH unresolved AS (
-    SELECT lots.id, lots.card_name, lots.finish, lots.product_id,
+    SELECT lots.id, lots.card_name, lots.finish, lots.product_id, lots.owner_id,
            current.deck_id AS deck_id
     FROM lots
     LEFT JOIN deck_cards AS current ON current.lot_id = lots.id AND current.equipped = 1
@@ -65,7 +65,7 @@ WITH unresolved AS (
 """
 
 
-def unresolved_groups(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+def unresolved_groups(conn: sqlite3.Connection, owner_id: int) -> list[sqlite3.Row]:
     """One row per group, non-basics first. `lot_id` is the group's lowest
     lot id, used to address the group."""
     return conn.execute(
@@ -78,10 +78,11 @@ def unresolved_groups(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         FROM unresolved AS u
         LEFT JOIN products ON products.id = u.product_id
         LEFT JOIN decks ON decks.id = u.deck_id
+        WHERE u.owner_id = ?
         GROUP BY u.card_name, u.finish, u.product_id, u.deck_id
         ORDER BY is_basic, u.card_name COLLATE NOCASE, decks.name
         """,
-        BASIC_LAND_NAMES,
+        (*BASIC_LAND_NAMES, owner_id),
     ).fetchall()
 
 

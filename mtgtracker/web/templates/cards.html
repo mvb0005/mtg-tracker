@@ -5,11 +5,12 @@
 {% block body_class %}with-panel wide{% endblock %}
 {% block panel %}{% include "_card_panel.html" %}{% endblock %}
 {% block content %}
-<h1>Cards</h1>
+<h1>{% if can_edit %}Cards{% else %}{{ owner.display_name }}'s cards{% endif %}</h1>
+{% if not can_edit %}<p class="eyebrow"><a href="/people/{{ owner.id }}">{{ owner.display_name }}</a> · read-only</p>{% endif %}
 <div class="catalog">
-  {{ cards.facet_sidebar("/cards", filters, view, facets, q=q, deck_options=deck_options) }}
+  {{ cards.facet_sidebar(action, filters, view, facets, q=q, deck_options=deck_options) }}
   <div class="results">
-    {{ cards.results_bar(filters, view, shown, total, filters.href("/cards", q=q), filters.href("/cards", q=q, view="list"), q=q) }}
+    {{ cards.results_bar(filters, view, shown, total, filters.href(action, q=q), filters.href(action, q=q, view="list"), q=q) }}
     {% if not card_rows %}
     <p class="empty">{% if q or filters.active %}No cards match these filters.{% else %}No cards yet.{% endif %}</p>
     {% elif view == "list" %}

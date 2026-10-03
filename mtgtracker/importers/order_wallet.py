@@ -63,7 +63,10 @@ def _find_sku(fulfillments: list[dict], title: str, price_amount: str) -> str | 
     return None
 
 
-def import_order_file(conn: sqlite3.Connection, path: str | Path, receipts_dir: str | Path) -> ImportResult:
+def import_order_file(
+    conn: sqlite3.Connection, path: str | Path, receipts_dir: str | Path, *, owner_id: int = 1
+) -> ImportResult:
+    """Import an Apple Wallet order for `owner_id` (see module docstring)."""
     path = Path(path)
     receipts_dir = Path(receipts_dir)
     receipts_dir.mkdir(parents=True, exist_ok=True)
@@ -140,9 +143,12 @@ def import_order_file(conn: sqlite3.Connection, path: str | Path, receipts_dir: 
         extra_allocations = largest_remainder_split(extra_cents, line_subtotals) if line_subtotals else []
 
     existing_txn = conn.execute(
-        "SELECT id, updated_at FROM transactions WHERE order_type_identifier = ? AND order_identifier = ?",
+        "SELECT id, updated_at, owner_id FROM transactions"
+        " WHERE order_type_identifier = ? AND order_identifier = ?",
         (order_type_identifier, order_identifier),
     ).fetchone()
+    if existing_txn is not None and existing_txn["owner_id"] != owner_id:
+        raise ValueError("that order was already imported by another user")
 
     created = False
     updated = False
@@ -153,13 +159,13 @@ def import_order_file(conn: sqlite3.Connection, path: str | Path, receipts_dir: 
             INSERT INTO transactions (
                 order_type_identifier, order_identifier, order_number, vendor,
                 status, created_at, updated_at, subtotal_cents, tax_cents,
-                shipping_cents, total_cents, currency, payment_method, source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'wallet_order')
+                shipping_cents, total_cents, currency, payment_method, source, owner_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'wallet_order', ?)
             """,
             (
                 order_type_identifier, order_identifier, order_number, vendor,
                 status, created_at, updated_at, subtotal_cents, tax_cents,
-                shipping_cents, total_cents, currency, payment_method,
+                shipping_cents, total_cents, currency, payment_method, owner_id,
             ),
         )
         transaction_id = cur.lastrowid

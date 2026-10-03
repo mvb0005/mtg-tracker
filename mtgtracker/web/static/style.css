@@ -998,3 +998,4 @@ body[data-identity] .deck-section-head { border-bottom: 0; padding-bottom: 6px; 
 .type-seg { flex-basis: 0; min-width: 2px; height: 100%; }
 .type-stack > .type-seg:first-child { border-radius: 2px 0 0 2px; }
 .type-stack > .type-seg:last-child { border-radius: 0 2px 2px 0; }
+.whoami { margin-left: 8px; padding-left: 14px; border-left: 1px solid var(--border); color: var(--text); font-weight: 600; font-size: 0.9rem; }

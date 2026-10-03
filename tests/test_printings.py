@@ -68,7 +68,7 @@ def test_find_printings_skips_digital_and_matches_card_faces(cache_dir):
 
 def test_unresolved_groups_list_nonbasics_first(db_path, cache_dir):
     conn = _conn(db_path)
-    groups = printings.unresolved_groups(conn)
+    groups = printings.unresolved_groups(conn, 1)
     names = [(g["card_name"], g["qty"], g["is_basic"]) for g in groups]
     assert names[:4] == [
         ("Arcane Signet", 1, 0), ("Arcane Signet", 1, 0), ("Sol Ring", 1, 0), ("Sol Ring", 1, 0),

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% set active = "people" %}
+{% block title %}{{ person.display_name }}{% endblock %}
+{% block content %}
+<p class="eyebrow"><a href="/people">Friends</a></p>
+<h1>{{ person.display_name }}{% if person.id == user.id %} <span class="subtle">(you)</span>{% endif %}</h1>
+<p class="deck-meta"><a href="/people/{{ person.id }}/cards">Browse {{ "your" if person.id == user.id else "their" }} cards</a> · {{ card_count }} card{{ "s" if card_count != 1 }}</p>
+<h2>Decks</h2>
+{% include "_deck_table.html" %}
+{% endblock %}

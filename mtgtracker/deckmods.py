@@ -75,6 +75,8 @@ def _check_insertable(
     ).fetchone()
     if lot is None:
         raise ChangeError(f"no card with id {lot_id}")
+    if lot["owner_id"] != _deck(conn, deck_id)["owner_id"]:
+        raise ChangeError(f"that copy of {lot['card_name']} isn't yours (borrow it instead)")
     if lot["disposed"] is not None:
         raise ChangeError(f"{lot['card_name']} has been disposed of")
     if _on_list(conn, deck_id, lot_id):
@@ -255,10 +257,10 @@ def _resolve(entries: list) -> list[dict | None]:
     return cards
 
 
-def _free_lots(conn: sqlite3.Connection, deck_id: int | None) -> dict[str, list[int]]:
-    """Owned, not-disposed lots not on deck_id's list (or any deck when None
-    -- a new deck has no list yet), keyed by normalized name; unassigned
-    copies first, then ones held by other decks."""
+def _free_lots(conn: sqlite3.Connection, deck_id: int | None, owner_id: int) -> dict[str, list[int]]:
+    """owner_id's not-disposed lots not on deck_id's list (or any deck when
+    None -- a new deck has no list yet), keyed by normalized name;
+    unassigned copies first, then ones held by their other decks."""
     taken = _pending_lots(conn, deck_id, "add_lot_id") if deck_id is not None else set()
     free: dict[str, list[int]] = {}
     for row in conn.execute(
@@ -267,11 +269,11 @@ def _free_lots(conn: sqlite3.Connection, deck_id: int | None) -> dict[str, list[
         FROM lots
         LEFT JOIN dispositions ON dispositions.lot_id = lots.id
         LEFT JOIN deck_cards AS holder ON holder.lot_id = lots.id AND holder.equipped = 1
-        WHERE dispositions.id IS NULL
+        WHERE dispositions.id IS NULL AND lots.owner_id = ?
           AND NOT EXISTS (SELECT 1 FROM deck_cards WHERE deck_id IS ? AND lot_id = lots.id)
         ORDER BY holder.deck_id IS NOT NULL, lots.id
         """,
-        (deck_id,),
+        (owner_id, deck_id),
     ):
         if row["id"] in taken:
             continue
@@ -313,7 +315,7 @@ def import_list(conn: sqlite3.Connection, deck_id: int, text: str) -> ImportSumm
         for key in _lot_keys(change["add_card_name"]):
             queued[key] = queued.get(key, 0) + 1
 
-    free = _free_lots(conn, deck_id)
+    free = _free_lots(conn, deck_id, _deck(conn, deck_id)["owner_id"])
 
     inserts: list[tuple[str, int | None, str]] = []  # (name, lot_id or None, scryfall id)
     used: set[int] = set()
@@ -374,7 +376,7 @@ class NewDeckSummary:
 
 
 def create_deck_from_list(
-    conn: sqlite3.Connection, name: str, text: str, *, format: str = "Commander"
+    conn: sqlite3.Connection, name: str, text: str, *, format: str = "Commander", owner_id: int = 1
 ) -> NewDeckSummary:
     """A new deck from a plain-text decklist, unassembled: every card you
     own goes on its list *without moving* (unequipped, so it stays in its
@@ -397,7 +399,7 @@ def create_deck_from_list(
         "SELECT deck_cards.lot_id, decks.name FROM deck_cards JOIN decks ON decks.id = deck_cards.deck_id"
         " WHERE deck_cards.equipped = 1"
     )}
-    free = _free_lots(conn, None)
+    free = _free_lots(conn, None, owner_id)
     summary = NewDeckSummary(deck_id=0, skipped_lines=len(parsed.skipped), unreadable=parsed.errors)
     commander = None
     owned_lots: list[int] = []
@@ -426,8 +428,8 @@ def create_deck_from_list(
     now = _now()
     try:
         cur = conn.execute(
-            "INSERT INTO decks (name, format, created_at, commander) VALUES (?, ?, ?, ?)",
-            (name, format, now[:10], commander),
+            "INSERT INTO decks (name, format, created_at, commander, owner_id) VALUES (?, ?, ?, ?, ?)",
+            (name, format, now[:10], commander, owner_id),
         )
         deck_id = cur.lastrowid
         conn.executemany(
@@ -493,11 +495,12 @@ def owned_candidates(conn: sqlite3.Connection, deck_id: int, query: str) -> list
         LEFT JOIN deck_cards AS holder ON holder.lot_id = lots.id AND holder.equipped = 1
         LEFT JOIN decks AS holder_deck ON holder_deck.id = holder.deck_id
         WHERE dispositions.id IS NULL
+          AND lots.owner_id = (SELECT owner_id FROM decks WHERE id = ?)
           AND lots.card_name LIKE ? ESCAPE '\\'
           AND NOT EXISTS (SELECT 1 FROM deck_cards WHERE deck_id = ? AND lot_id = lots.id)
         ORDER BY lots.card_name COLLATE NOCASE, holder_deck.name, lots.id
         """,
-        ("%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%", deck_id),
+        (deck_id, "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%", deck_id),
     ).fetchall()
     groups: dict[tuple, dict] = {}
     for row in rows:
@@ -526,8 +529,9 @@ def cut_options(conn: sqlite3.Connection, deck_id: int) -> list[dict]:
     taken = _pending_lots(conn, deck_id, "cut_lot_id")
     rows = conn.execute(
         "SELECT lots.id, lots.card_name FROM deck_cards JOIN lots ON lots.id = deck_cards.lot_id"
-        " WHERE deck_cards.deck_id = ? ORDER BY lots.card_name COLLATE NOCASE, lots.id",
-        (deck_id,),
+        " WHERE deck_cards.deck_id = ? AND lots.owner_id = (SELECT owner_id FROM decks WHERE id = ?)"
+        " ORDER BY lots.card_name COLLATE NOCASE, lots.id",
+        (deck_id, deck_id),
     ).fetchall()
     options: dict[str, dict] = {}
     for row in rows:
@@ -580,10 +584,11 @@ def owned_fitting(conn: sqlite3.Connection, deck_id: int, identity: tuple[str, .
         LEFT JOIN deck_cards AS holder ON holder.lot_id = lots.id AND holder.equipped = 1
         LEFT JOIN decks AS holder_deck ON holder_deck.id = holder.deck_id
         WHERE dispositions.id IS NULL
+          AND lots.owner_id = (SELECT owner_id FROM decks WHERE id = ?)
           AND NOT EXISTS (SELECT 1 FROM deck_cards WHERE deck_id = ? AND lot_id = lots.id)
         ORDER BY lots.card_name COLLATE NOCASE, holder.deck_id IS NOT NULL, lots.id
         """,
-        (deck_id,),
+        (deck_id, deck_id),
     ):
         if row["id"] in taken:
             continue

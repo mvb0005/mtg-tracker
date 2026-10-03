@@ -7,13 +7,13 @@
 {% block panel %}{% include "_card_panel.html" %}{% endblock %}
 {% block content %}
 <header class="deck-hero">
-  <p class="eyebrow"><a href="/decks">Decks</a> <span aria-hidden="true">/</span> {{ deck.format }}</p>
+  <p class="eyebrow">{% if can_edit %}<a href="/decks">Decks</a>{% else %}<a href="/people/{{ owner.id }}">{{ owner.display_name }}'s decks</a>{% endif %} <span aria-hidden="true">/</span> {{ deck.format }}</p>
   <h1>{{ deck.name }} <span class="pips" aria-label="Colors">{{ identity_pips(identity) }}</span></h1>
   <p class="deck-meta">
     {%- if deck.commander %}Led by <strong>{{ deck.commander }}</strong> · {% endif -%}
     {% if deck.version %}<a href="/decks/{{ deck.id }}/versions/{{ deck.version }}">Version {{ deck.version }}</a>{% else %}Not versioned yet{% endif %}
     · since {{ deck.created_at[:10] }}
-    · <a class="action-link" href="/decks/{{ deck.id }}/modify">Modify deck</a>
+    {%- if can_edit %} · <a class="action-link" href="/decks/{{ deck.id }}/modify">Modify deck</a>{% endif %}
   </p>
 </header>
 
@@ -23,9 +23,9 @@
   <div><dt>Equipped here</dt><dd>{{ equipped_count }}</dd></div>
   {% if elsewhere_count %}<div><dt>In other decks</dt><dd>{{ elsewhere_count }}</dd></div>{% endif %}
   {% if wanted_count %}<div><dt>To acquire</dt><dd>{{ wanted_count }}</dd></div>{% endif %}
-  <div><dt>Cost basis</dt><dd>{{ list_cost_cents | money }}</dd></div>
+  {% if list_cost_cents is not none %}<div><dt>Cost basis</dt><dd>{{ list_cost_cents | money }}</dd></div>{% endif %}
 </dl>
-<p class="footnote">Cost basis sums the owned cards on this list, including ones lent to other decks, so a card on two lists counts toward both. Cards still to acquire aren't counted.</p>
+{% if list_cost_cents is not none %}<p class="footnote">Cost basis sums the owned cards on this list, including ones lent to other decks, so a card on two lists counts toward both. Cards still to acquire aren't counted.</p>{% endif %}
 
 <h2>Reassemble</h2>
 {% if not pull_from and not acquire %}
@@ -57,8 +57,8 @@
 {% if groups %}{% include "_deck_breakdown.html" %}{% endif %}
 
 <h2>Decklist</h2>
-{% if deck.format == "Commander" %}
-<details class="commander-picker"{% if not deck.commander %} open{% endif %}>
+{% if deck.format == "Commander" and can_edit %}
+<details class="commander-picker"{% if not deck.commander and can_edit %} open{% endif %}>
   <summary>{% if deck.commander %}Commander: <strong>{{ deck.commander }}</strong> · change{% else %}Choose a commander{% endif %}</summary>
   {% if commander_options %}
   <form method="post" action="/decks/{{ deck.id }}/commander">

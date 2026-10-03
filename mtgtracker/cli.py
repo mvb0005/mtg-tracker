@@ -6,7 +6,7 @@ from pathlib import Path
 
 import typer
 
-from mtgtracker import db
+from mtgtracker import db, users
 from mtgtracker.decks import reassemble
 from mtgtracker.importers.order_wallet import import_order_file
 from mtgtracker.importers.precon_decklist import seed_precon_deck_for_product
@@ -24,16 +24,56 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _user_id(conn: sqlite3.Connection, spec: str) -> int:
+    """--user: an email or a numeric id; empty means user 1."""
+    spec = spec.strip()
+    if not spec:
+        return users.OWNER_ID
+    user = users.get(conn, int(spec)) if spec.isdigit() else users.by_email(conn, spec)
+    if user is None:
+        raise typer.BadParameter(f"no user {spec!r}")
+    return user.id
+
+
+@app.command("add-user")
+def add_user(
+    name: str = typer.Argument(..., help="Display name"),
+    email: str = typer.Option("", "--email", help="Email they sign in with (Cloudflare Access)"),
+    admin: bool = typer.Option(False, "--admin", help="Make them an admin"),
+    db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db", help="SQLite database path"),
+):
+    """Add a person (users only exist if added -- sign-in is an allowlist)."""
+    conn = _connect(db_path)
+    try:
+        user = users.create(conn, name, email or None, is_admin=admin)
+    except users.UserError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"Added user {user.id}: {user.display_name}" + (f" <{user.email}>" if user.email else ""))
+
+
+@app.command("rename-user")
+def rename_user(
+    user: str = typer.Argument(..., help="Email or id"),
+    name: str = typer.Argument(..., help="New display name"),
+    db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db", help="SQLite database path"),
+):
+    """Change a person's display name (user 1 starts as "Owner")."""
+    conn = _connect(db_path)
+    renamed = users.rename(conn, _user_id(conn, user), name)
+    typer.echo(f"User {renamed.id} is now {renamed.display_name}")
+
+
 @app.command("import-order")
 def import_order(
     path: Path = typer.Argument(..., help="Path to a .order file"),
     db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db", help="SQLite database path"),
     receipts_dir: Path = typer.Option(DEFAULT_RECEIPTS_DIR, "--receipts", help="Receipts storage directory"),
+    user: str = typer.Option("", "--user", help="Email or id of the user it belongs to (default: user 1)"),
 ):
     """Import an Apple Wallet .order file, and seed any known precon decks
     found among its products."""
     conn = _connect(db_path)
-    result = import_order_file(conn, path, receipts_dir)
+    result = import_order_file(conn, path, receipts_dir, owner_id=_user_id(conn, user))
 
     if result.created:
         typer.echo(f"Created transaction {result.transaction_id}.")
@@ -114,11 +154,14 @@ def serve(
 
     if reload:
         os.environ["MTGTRACKER_DB"] = str(db_path)
-        uvicorn.run("mtgtracker.web.app:app_from_env", factory=True, host=host, port=port, reload=True)
+        uvicorn.run("mtgtracker.web.app:app_from_env", factory=True, host=host, port=port, reload=True,
+                    proxy_headers=False)
     else:
         from mtgtracker.web.app import create_app
 
-        uvicorn.run(create_app(db_path), host=host, port=port)
+        # proxy_headers=False: never trust X-Forwarded-For, so a request can't
+        # pose as a loopback client (which cloudflare auth treats as the owner).
+        uvicorn.run(create_app(db_path), host=host, port=port, proxy_headers=False)
 
 
 if __name__ == "__main__":

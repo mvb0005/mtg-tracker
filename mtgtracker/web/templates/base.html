@@ -13,10 +13,11 @@
   <header>
     <nav>
       <a class="brand" href="/">mtgtracker</a>
-      {% set nav = [("/", "Overview", "dashboard"), ("/decks", "Decks", "decks"), ("/cards", "Cards", "cards"), ("/printings", "Printings", "printings"), ("/transactions", "Purchases", "transactions")] %}
+      {% set nav = [("/", "Overview", "dashboard"), ("/decks", "Decks", "decks"), ("/cards", "Cards", "cards"), ("/printings", "Printings", "printings"), ("/transactions", "Purchases", "transactions"), ("/people", "Friends", "people")] %}
       {% for href, label, key in nav %}
         <a href="{{ href }}"{% if active == key %} aria-current="page"{% endif %}>{{ label }}</a>
       {% endfor %}
+      {% if user %}<span class="whoami" title="{{ user.email or 'Signed in' }}">{{ user.display_name }}</span>{% endif %}
     </nav>
   </header>
   <div class="page">
