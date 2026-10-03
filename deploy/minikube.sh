@@ -37,10 +37,46 @@ pod() {
   "${KUBECTL[@]}" get pod -l app=mtgtracker -o jsonpath='{.items[0].metadata.name}'
 }
 
+# Sign-in settings for the app (web/auth.py), from .env, as the
+# mtgtracker-auth ConfigMap the Deployment reads. MTG_AUTH defaults to
+# single (no sign-in); cloudflare also needs the Access team domain and AUD.
+# Checked here so a bad value fails the deploy instead of crash-looping the
+# pod. None of these are secrets (the AUD is an identifier, not a key).
+apply_auth_config() {
+  local mode domain aud owner
+  mode=$(env_value MTG_AUTH); mode=${mode:-single}
+  domain=$(env_value CF_ACCESS_TEAM_DOMAIN)
+  aud=$(env_value CF_ACCESS_AUD)
+  owner=$(env_value MTG_OWNER_EMAIL)
+  case "$mode" in
+    single) ;;
+    cloudflare)
+      if [[ -z $domain || -z $aud ]]; then
+        echo "MTG_AUTH=cloudflare needs CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD in .env" >&2
+        exit 1
+      fi
+      [[ -n $owner ]] || echo "warning: no MTG_OWNER_EMAIL in .env; nobody can sign in as the owner" >&2
+      ;;
+    *)
+      # dev lets anyone pick who they are -- never on the cluster.
+      echo "MTG_AUTH must be single or cloudflare on the cluster, not '$mode'" >&2
+      exit 1
+      ;;
+  esac
+  "${KUBECTL[@]}" create configmap mtgtracker-auth \
+    --from-literal=MTG_AUTH="$mode" \
+    --from-literal=CF_ACCESS_TEAM_DOMAIN="$domain" \
+    --from-literal=CF_ACCESS_AUD="$aud" \
+    --from-literal=MTG_OWNER_EMAIL="$owner" \
+    --dry-run=client -o yaml | "${KUBECTL[@]}" apply -f -
+  echo "auth: $mode"
+}
+
 cmd_up() {
   minikube status >/dev/null 2>&1 || minikube start
   minikube image build -t "$IMAGE" .
   kubectl apply -k deploy/k8s
+  apply_auth_config
   # Pick up a rebuilt image under the same tag.
   "${KUBECTL[@]}" rollout restart deployment/mtgtracker
   "${KUBECTL[@]}" rollout status deployment/mtgtracker --timeout=120s
