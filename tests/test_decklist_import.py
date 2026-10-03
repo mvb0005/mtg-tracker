@@ -93,7 +93,7 @@ def test_import_queues_owned_and_planned_and_skips_the_rest(db_path, scryfall_ap
     assert (cache_dir / "cards" / "mf.json").exists()  # planned card gets an image/type
 
     message = summary.message()
-    assert message.startswith("Queued 2: 1 you own, 1 to buy.")
+    assert message.startswith("Queued 2: 1 you own, 1 to acquire.")
     assert "Already in the deck (1): Counterspell." in message
     assert "Not found on Scryfall (1): Totally Made Up." in message
 
@@ -121,9 +121,9 @@ def test_import_through_the_web(client, db_path, scryfall_api):
     resp = client.post(f"/decks/{keen}/import", data={"decklist": LIST}, follow_redirects=False)
     assert resp.status_code == 303
     page = client.get(resp.headers["location"]).text
-    assert "Queued 2: 1 you own, 1 to buy." in page
+    assert "Queued 2: 1 you own, 1 to acquire." in page
     assert "Mystic Forge" in page
-    assert "to buy" in page
+    assert "to acquire" in page
 
     empty = client.post(f"/decks/{keen}/import", data={"decklist": "\n"}, follow_redirects=False)
     assert "error=" in empty.headers["location"]

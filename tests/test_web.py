@@ -74,7 +74,8 @@ def test_deck_detail_groups_basics_and_shows_reassemble(client, db_path):
     # The borrowed Counterspell's row is greyed out; the panel data says where it is.
     away_row = re.search(r'<li class="deck-row away" data-card=\'([^\']*)\'', html)
     assert json.loads(away_row.group(1))["where"] == "Lent to Blue Pile"
-    assert "Pull these 1 card back" in html
+    assert "Pull from other decks" in html
+    assert re.search(r'<a href="/decks/\d+">Blue Pile</a> <span class="subtle">· 1</span>', html)
     assert "Blue Pile" in html  # where the borrowed Counterspell is now
     assert "needs printing" in html
 
@@ -304,7 +305,7 @@ def test_cards_grid_and_list_views(client, cache_dir):
 
 def test_stylesheet_is_versioned_and_cached(client):
     html = client.get("/").text
-    href = re.search(r'<link rel="stylesheet" href="([^"]+)"', html).group(1)
+    href = re.search(r'<link rel="stylesheet" href="([^"]*/static/style\.css[^"]*)"', html).group(1)
     assert re.search(r"/static/style\.css\?v=[0-9a-f]{12}$", href)
 
     versioned = client.get(href)
@@ -589,7 +590,7 @@ def test_filters_and_sorting(client, db_path, cache_dir):
     assert shown == ["Counterspell"]
     assert f'href="/decks/{keen}?sort=name&amp;color=U&amp;view=list"' in html
     assert "Showing 1 of 100 cards" in html
-    assert "Deck breakdown" in html  # breakdown still covers the whole deck
+    assert "<h2>Breakdown</h2>" in html  # breakdown still covers the whole deck
 
 
 def test_card_details_list_every_deck_with_counts(client, db_path):

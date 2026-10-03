@@ -1,9 +1,12 @@
-{# Deck breakdown: mana curve (columns), mana colors and card types (stacked
-   bars with counted legends). Plain HTML; every mark has a hover title, and
+{# Deck breakdown: mana curve (columns), mana colors (stacked bar with a
+   counted legend) and card types (bars with counts). For multicolor decks
+   the curve and type bars stack by color too. Every color bucket carries
+   its own CSS `fill` (breakdown._fill: a mana hue, or stripes for a color
+   combination), so segments and swatches always match. Plain HTML; every mark has a hover title, and
    counts are always written out so color never carries meaning alone. #}
 {% set b = breakdown %}
 <details class="breakdown" open>
-  <summary>Deck breakdown</summary>
+  <summary><h2>Breakdown</h2></summary>
   <div class="breakdown-grid">
 
     <section class="breakdown-card" aria-labelledby="bd-curve">
@@ -14,11 +17,22 @@
         {% for bar in b.curve %}
         <div class="curve-col" role="listitem" title="{{ bar.count }} card{{ 's' if bar.count != 1 }} at mana value {{ bar.value }}">
           <span class="curve-count">{{ bar.count if bar.count else "" }}</span>
-          <div class="curve-track"><div class="curve-bar" style="height: {{ '%.1f' | format(bar.pct) }}%"></div></div>
+          <div class="curve-track">
+            {%- if b.stacked and bar.count %}
+            <div class="curve-bar curve-stack" style="height: {{ '%.1f' | format(bar.pct) }}%">
+              {%- for seg in bar.segments %}<div class="curve-seg" data-colors="{{ seg.key }}" style="flex-grow: {{ seg.count }}; background: {{ seg.fill }}" title="Mana value {{ bar.value }} · {{ seg.label }}: {{ seg.count }}"></div>{% endfor -%}
+            </div>
+            {%- else %}<div class="curve-bar" style="height: {{ '%.1f' | format(bar.pct) }}%"></div>{% endif -%}
+          </div>
           <span class="curve-value">{{ bar.value }}</span>
         </div>
         {% endfor %}
       </div>
+      {% if b.stacked %}
+      <ul class="legend">
+        {% for s in b.curve_legend %}<li><span class="swatch" style="background: {{ s.fill }}"></span>{{ s.label }} <strong>{{ s.count }}</strong></li>{% endfor %}
+      </ul>
+      {% endif %}
       {% else %}
       <p class="subtle">No cached mana values yet.</p>
       {% endif %}
@@ -29,10 +43,10 @@
       <p class="subtle breakdown-sub">Non-land cards by color</p>
       {% if b.colors %}
       <div class="stack" role="img" aria-label="{% for s in b.colors %}{{ s.label }} {{ s.count }}{{ ', ' if not loop.last }}{% endfor %}">
-        {% for s in b.colors %}<div class="stack-seg mana-{{ s.key }}" style="width: {{ '%.2f' | format(s.pct) }}%" title="{{ s.label }}: {{ s.count }} ({{ '%.0f' | format(s.pct) }}%)"></div>{% endfor %}
+        {% for s in b.colors %}<div class="stack-seg" data-colors="{{ s.key }}" style="width: {{ '%.2f' | format(s.pct) }}%; background: {{ s.fill }}" title="{{ s.label }}: {{ s.count }} ({{ '%.0f' | format(s.pct) }}%)"></div>{% endfor %}
       </div>
       <ul class="legend">
-        {% for s in b.colors %}<li><span class="swatch mana-{{ s.key }}"></span>{{ s.label }} <strong>{{ s.count }}</strong></li>{% endfor %}
+        {% for s in b.colors %}<li><span class="swatch" style="background: {{ s.fill }}"></span>{{ s.label }} <strong>{{ s.count }}</strong></li>{% endfor %}
       </ul>
       {% else %}
       <p class="subtle">No cached color data yet.</p>
@@ -42,12 +56,26 @@
     <section class="breakdown-card" aria-labelledby="bd-types">
       <h3 id="bd-types">Card types</h3>
       <p class="subtle breakdown-sub">All {{ b.type_total }} cards</p>
-      <div class="stack" role="img" aria-label="{% for s in b.types %}{{ s.label }} {{ s.count }}{{ ', ' if not loop.last }}{% endfor %}">
-        {% for s in b.types %}<div class="stack-seg {{ 'series-' ~ s.slot if s.slot else 'series-other' }}" style="width: {{ '%.2f' | format(s.pct) }}%" title="{{ s.label }}: {{ s.count }} ({{ '%.0f' | format(s.pct) }}%)"></div>{% endfor %}
-      </div>
-      <ul class="legend">
-        {% for s in b.types %}<li><span class="swatch {{ 'series-' ~ s.slot if s.slot else 'series-other' }}"></span>{{ s.label }} <strong>{{ s.count }}</strong></li>{% endfor %}
+      <ul class="type-bars">
+        {% for s in b.types %}
+        <li title="{{ s.label }}: {{ s.count }} ({{ '%.0f' | format(s.pct) }}%)">
+          <span class="type-name">{{ s.label }}</span>
+          <span class="type-track">
+            {%- if b.stacked %}
+            <span class="type-bar type-stack" style="width: {{ '%.1f' | format(s.bar_pct) }}%">
+              {%- for seg in s.segments %}<span class="type-seg" data-colors="{{ seg.key }}" style="flex-grow: {{ seg.count }}; background: {{ seg.fill }}" title="{{ s.label }} · {{ seg.label }}: {{ seg.count }}"></span>{% endfor -%}
+            </span>
+            {%- else %}<span class="type-bar" style="width: {{ '%.1f' | format(s.bar_pct) }}%"></span>{% endif -%}
+          </span>
+          <span class="type-count">{{ s.count }}</span>
+        </li>
+        {% endfor %}
       </ul>
+      {% if b.stacked %}
+      <ul class="legend">
+        {% for s in b.type_legend %}<li><span class="swatch" style="background: {{ s.fill }}"></span>{{ s.label }} <strong>{{ s.count }}</strong></li>{% endfor %}
+      </ul>
+      {% endif %}
     </section>
 
   </div>

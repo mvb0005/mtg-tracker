@@ -3,6 +3,7 @@
 {% block title %}{{ deck.name }} v{{ version.version }}{% endblock %}
 {% import "_card_tiles.html" as cards with context %}
 {% block body_class %}with-panel{% endblock %}
+{% block body_attrs %}{{ theme_attrs(identity) }}{% endblock %}
 {% block panel %}{% include "_card_panel.html" %}{% endblock %}
 {% block content %}
 <p><a href="/decks/{{ deck.id }}/modify">← {{ deck.name }} history</a></p>

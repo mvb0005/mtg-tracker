@@ -1,17 +1,20 @@
 <div class="table-wrap">
 {% if decks %}
 <table>
-  <thead><tr><th>Deck</th><th>Format</th><th class="num">On list</th><th class="num">Equipped</th><th>Status</th></tr></thead>
+  <thead><tr><th>Deck</th><th>Colors</th><th>Format</th><th class="num">On list</th><th class="num">Equipped</th><th>Status</th></tr></thead>
   <tbody>
   {% for deck in decks %}
     <tr>
-      <td class="name"><a href="/decks/{{ deck.id }}">{{ deck.name }}</a></td>
+      <td class="name deck-name-cell" {{ theme_attrs(deck.identity) }}><a href="/decks/{{ deck.id }}">{{ deck.name }}</a></td>
+      <td><span class="pips">{{ identity_pips(deck.identity) }}</span></td>
       <td>{{ deck.format }}</td>
       <td class="num">{{ deck.list_count }}</td>
       <td class="num">{{ deck.equipped_count }}</td>
       <td>
         {% if deck.list_count and deck.equipped_count == deck.list_count %}<span class="tag ok">assembled</span>
-        {% elif deck.list_count %}<span class="tag away">{{ deck.list_count - deck.equipped_count }} away</span>
+        {% elif deck.list_count %}
+          {%- if deck.elsewhere_count %}<span class="tag away">{{ deck.elsewhere_count }} to pull</span>{% endif %}
+          {% if deck.wanted_count %}<span class="tag acquire">{{ deck.wanted_count }} to acquire</span>{% endif %}
         {% else %}<span class="tag">empty</span>{% endif %}
       </td>
     </tr>

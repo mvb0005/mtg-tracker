@@ -149,29 +149,41 @@ def _scryfall(monkeypatch, handler):
     install_transport(monkeypatch, httpx.MockTransport(handler))
 
 
-def test_planned_cards_stay_pending_until_owned(conn, monkeypatch, cache_dir):
+def test_planned_cards_become_wanted_on_apply(conn, monkeypatch, cache_dir):
     card = {"id": "planned-1", "name": "Rhystic Study", "set": "pcy", "collector_number": "45",
             "finishes": ["nonfoil"], "type_line": "Enchantment", "cmc": 3, "colors": ["U"],
             "image_uris": {"normal": "https://img/rhystic.jpg"}}
     _scryfall(monkeypatch, lambda request: httpx.Response(200, json=card))
-    keen = _deck(conn, "Keen Engineering")["id"]
+    keen, reign = _deck(conn, "Keen Engineering")["id"], _deck(conn, "Reign of Dragons")["id"]
 
     planned = deckmods.add_planned(conn, keen, "rhystic")
     [change] = deckmods.pending_changes(conn, keen)
     assert (change["id"], change["add_card_name"], change["ready"]) == (planned, "Rhystic Study", False)
     assert (cache_dir / "cards" / "planned-1.json").exists()  # cached for images/types
-
-    with pytest.raises(ChangeError, match="no ready changes"):
-        deckmods.apply_changes(conn, keen)
-
-    reign = _deck(conn, "Reign of Dragons")["id"]
-    deckmods.add_owned(conn, keen, _lot(conn, reign, "Anger"))
-    assert deckmods.apply_changes(conn, keen) == 2
-    [still_pending] = deckmods.pending_changes(conn, keen)
-    assert still_pending["id"] == planned
-
     with pytest.raises(ChangeError, match="not Rhystic Study"):
         deckmods.link_owned(conn, keen, planned, _lot(conn, reign, "Chaos Warp"))
+
+    deckmods.set_cut(conn, keen, planned, _lot(conn, keen, "Counterspell"))
+    lots_before = conn.execute("SELECT COUNT(*) FROM lots").fetchone()[0]
+    assert deckmods.apply_changes(conn, keen) == 2
+
+    # On the list as wanted -- never a lot, so nothing enters the collection.
+    wants = conn.execute(
+        "SELECT card_name, scryfall_id FROM deck_wants WHERE deck_id = ?", (keen,)
+    ).fetchall()
+    assert [tuple(w) for w in wants] == [("Rhystic Study", "planned-1")]
+    assert conn.execute("SELECT COUNT(*) FROM lots").fetchone()[0] == lots_before
+    assert deckmods.pending_changes(conn, keen) == []
+    assert deckmods.list_size(conn, keen) == 100  # 99 owned + 1 wanted
+    [v2, _] = deckmods.versions(conn, keen)
+    assert v2["added"] == [("Rhystic Study", 1)]
+    assert v2["removed"] == [("Counterspell", 1)]
+    assert v2["card_count"] == 100
+
+
+def test_no_changes_to_apply(conn):
+    with pytest.raises(ChangeError, match="no changes to apply"):
+        deckmods.apply_changes(conn, _deck(conn, "Keen Engineering")["id"])
 
 
 @pytest.mark.parametrize(
@@ -238,7 +250,7 @@ def test_modify_page_shows_readable_cards_and_one_shared_picker(client, db_path)
 
     html = client.get(f"/decks/{keen}/modify").text
     assert html.count('id="cut-picker"') == 1  # rendered once, shared by every change
-    assert html.count("data-pick-cut=") == 2
+    assert html.count('data-picker="cut-picker"') == 2
     picks = re.findall(r'class="pick-tile"[^>]*>\s*<figure class="[^"]*" data-card=\'([^\']*)\'', html)
     names = [json.loads(p)["name"] for p in picks]
     assert "Counterspell" in names  # the deck's cards, each with hover/panel data

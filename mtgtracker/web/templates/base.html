@@ -4,9 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}mtgtracker{% endblock %} · mtgtracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,500;0,600;0,700;1,500&display=swap">
   <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v={{ static_version('style.css') }}">
 </head>
-<body class="{% block body_class %}{% endblock %}">
+<body class="{% block body_class %}{% endblock %}" {% block body_attrs %}{% endblock %}>
   <header>
     <nav>
       <a class="brand" href="/">mtgtracker</a>

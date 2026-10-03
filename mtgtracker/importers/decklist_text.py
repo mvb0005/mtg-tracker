@@ -35,7 +35,8 @@ _LINE_RE = re.compile(
 )
 _HEADER_RE = re.compile(r"^(?P<title>[A-Za-z][A-Za-z ]*?)\s*(?:\(\d+\))?\s*:?\s*$")
 
-DECK_SECTIONS = {"commander", "commanders", "companion", "deck", "main", "mainboard", "main deck"}
+COMMANDER_SECTIONS = {"commander", "commanders"}
+DECK_SECTIONS = COMMANDER_SECTIONS | {"companion", "deck", "main", "mainboard", "main deck"}
 SKIPPED_SECTIONS = {"sideboard", "maybeboard", "maybe", "considering", "tokens", "token", "attractions",
                     "stickers", "planes", "schemes"}
 
@@ -47,6 +48,7 @@ class Entry:
     set_code: str | None = None
     collector_number: str | None = None
     finish: str = "nonfoil"
+    commander: bool = False  # listed under a "Commander" section
 
 
 @dataclass
@@ -63,13 +65,16 @@ class ParsedList:
 def parse(text: str) -> ParsedList:
     result = ParsedList()
     skipping = False
+    in_commander = False
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith(("//", "#")):
             continue
         header = _HEADER_RE.match(line)
         if header and header.group("title").strip().lower() in DECK_SECTIONS | SKIPPED_SECTIONS:
-            skipping = header.group("title").strip().lower() in SKIPPED_SECTIONS
+            title = header.group("title").strip().lower()
+            skipping = title in SKIPPED_SECTIONS
+            in_commander = title in COMMANDER_SECTIONS
             continue
         if skipping:
             result.skipped.append(line)
@@ -86,5 +91,6 @@ def parse(text: str) -> ParsedList:
             set_code=match.group("set").lower() if match.group("set") else None,
             collector_number=match.group("number"),
             finish=finish,
+            commander=in_commander,
         ))
     return result

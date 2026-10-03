@@ -71,7 +71,7 @@ def record_version(
     conn: sqlite3.Connection, deck_id: int, note: str | None = None, *, commit: bool = True
 ) -> int:
     """Bump the deck's version and snapshot its current list (every
-    deck_cards row, equipped or not). Returns the new version number. Pass
+    deck_cards row, equipped or not, plus every wanted card). Returns the new version number. Pass
     commit=False to make it part of a larger transaction."""
     current = conn.execute("SELECT version FROM decks WHERE id = ?", (deck_id,)).fetchone()
     if current is None:
@@ -85,6 +85,11 @@ def record_version(
     conn.execute(
         "INSERT INTO deck_version_cards (version_id, lot_id)"
         " SELECT ?, lot_id FROM deck_cards WHERE deck_id = ?",
+        (cur.lastrowid, deck_id),
+    )
+    conn.execute(
+        "INSERT INTO deck_version_wants (version_id, card_name, scryfall_id)"
+        " SELECT ?, card_name, scryfall_id FROM deck_wants WHERE deck_id = ?",
         (cur.lastrowid, deck_id),
     )
     if commit:

@@ -1,14 +1,30 @@
+/* Design tokens. A printed deck-sheet look: warm paper, ink, ruled
+   sections, a serif display face. The accent is neutral graphite by default
+   and takes a deck's color on deck pages (theme_attrs sets --accent to one
+   of the --ink-* colors and --identity to a stripe of all of them). Inks
+   are text-safe (>= 4.5:1 on --bg) in both modes. */
 :root {
-  --bg: #f7f6f3;
-  --surface: #ffffff;
-  --text: #1d1d1f;
-  --muted: #6b6b70;
-  --border: #e3e1dc;
-  --accent: #7a4fd6;
-  --warn-bg: #fff4d6;
-  --warn-text: #7a5300;
-  --ok: #2f7d4f;
-  --away: #b3541e;
+  --bg: #f3f0e8;
+  --surface: #fbf9f4;
+  --text: #1c1b19;
+  --muted: #6b665d;
+  --border: #dcd6c8;
+  --rule: #1c1b19;
+  --font-display: "Spectral", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --radius: 4px;
+  --ink-W: #8a6512;
+  --ink-U: #1d59a3;
+  --ink-B: #4d3b66;
+  --ink-R: #b0271f;
+  --ink-G: #2d6a36;
+  --ink-C: #3f4b57;
+  --accent: var(--ink-C);
+  --identity: var(--ink-C);
+  --warn-bg: #f6e7c1;
+  --warn-text: #6b4a00;
+  --ok: #2d6a36;
+  --away: #a3461a;
   /* Charts: categorical slots (fixed order, validated) and mana colors. */
   --series-1: #2a78d6;
   --series-2: #eb6834;
@@ -29,19 +45,24 @@
   --mana-G: #008300;
   --mana-M: #e87ba4;
   --mana-C: #a9a79f;
-  --curve: #7a4fd6;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #151517;
-    --surface: #1f1f23;
-    --text: #ececef;
-    --muted: #9a9aa3;
-    --border: #33333a;
-    --accent: #a98bff;
-    --warn-bg: #3a2f12;
-    --warn-text: #f3d27a;
-    --ok: #6fcf97;
+    --bg: #141412;
+    --surface: #1c1b19;
+    --text: #ece8df;
+    --muted: #9e988c;
+    --border: #35322c;
+    --rule: #ece8df;
+    --ink-W: #e2bf62;
+    --ink-U: #7aaef0;
+    --ink-B: #b9a6dc;
+    --ink-R: #f08a80;
+    --ink-G: #79c487;
+    --ink-C: #aeb7c1;
+    --warn-bg: #3b2f12;
+    --warn-text: #f0d283;
+    --ok: #79c487;
     --away: #f0a36e;
     --series-1: #3987e5;
     --series-2: #d95926;
@@ -59,7 +80,6 @@
     --mana-G: #008300;
     --mana-M: #d55181;
     --mana-C: #6d6b65;
-    --curve: #a98bff;
   }
 }
 * { box-sizing: border-box; }
@@ -67,71 +87,138 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 15px/1.5 var(--font-body);
 }
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-header {
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
+a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
 }
+a:hover { text-decoration-color: currentColor; }
+body > header { background: var(--bg); border-bottom: 1px solid var(--border); }
+/* Deck pages: the header's bottom edge becomes the deck's color stripe. */
+body[data-identity] > header { border-bottom: 3px solid transparent; border-image: var(--identity) 1; }
 /* --content-max: width of the content column (incl. its 16px gutters).
    Catalog pages (.wide) add room for the 220px filter sidebar + gap. */
 :root { --content-max: 1040px; }
 body.wide { --content-max: 1284px; }
 header nav, main { max-width: var(--content-max); margin: 0 auto; padding: 0 16px; }
-header nav { display: flex; gap: 20px; align-items: center; height: 52px; }
-header nav .brand { font-weight: 700; color: var(--text); margin-right: auto; }
-header nav a[aria-current="page"] { color: var(--text); font-weight: 600; }
+header nav { display: flex; gap: 22px; align-items: center; height: 56px; }
+header nav a { color: var(--muted); text-decoration: none; font-size: 0.95rem; }
+header nav a:hover { color: var(--text); }
+header nav .brand {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.3rem;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  margin-right: auto;
+}
+header nav a[aria-current="page"] {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 6px;
+}
 main { padding-top: 24px; padding-bottom: 48px; }
 /* Phones: the brand + five links don't fit one row; wrap links under it. */
 @media (max-width: 600px) {
   header nav { flex-wrap: wrap; height: auto; gap: 4px 16px; padding-top: 10px; padding-bottom: 10px; }
   header nav .brand { flex-basis: 100%; }
 }
-h1 { font-size: 1.6rem; margin: 0 0 4px; }
-h2 { font-size: 1.15rem; margin: 32px 0 12px; }
+h1, h2 { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; }
+h1 { font-size: 2.2rem; line-height: 1.1; margin: 0 0 6px; }
+h2 {
+  font-size: 1.35rem;
+  margin: 40px 0 14px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+/* Small section labels (grid sections, chart titles) share the list
+   view's look: uppercase, tracked, in the accent, over a rule. */
+h3 {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--accent);
+}
+h3 .subtle { letter-spacing: 0.02em; }
 .subtle { color: var(--muted); }
-.stats {
+/* Headline numbers as a ledger row (dashboard .stats and the deck page's
+   dl.ledger): big serif figures between rules, no boxes. */
+.stats, .ledger {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 12px;
-  margin: 20px 0;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  margin: 22px 0 8px;
+  padding: 0;
+  border-top: 2px solid var(--rule);
+  border-bottom: 1px solid var(--border);
 }
-.stat {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 14px 16px;
+.stat, .ledger > div { padding: 10px 18px 12px 0; }
+.stat + .stat, .ledger > div + div { padding-left: 18px; border-left: 1px solid var(--border); }
+.stat .label, .ledger dt {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
 }
-.stat .label { color: var(--muted); font-size: 0.85rem; }
-.stat .value { font-size: 1.5rem; font-weight: 650; font-variant-numeric: tabular-nums; }
-.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.stat .value, .ledger dd {
+  margin: 2px 0 0;
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 600;
+  line-height: 1.15;
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.footnote { margin: 0 0 8px; color: var(--muted); font-size: 0.82rem; max-width: 95ch; }
+@media (max-width: 600px) {
+  /* Two columns of figures; dividers only between neighbours in a row. */
+  .stats, .ledger { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat + .stat, .ledger > div + div { border-left: 0; padding-left: 0; }
+  .stat:nth-child(even), .ledger > div:nth-child(even) { border-left: 1px solid var(--border); padding-left: 14px; }
+  .stat:nth-child(n+3), .ledger > div:nth-child(n+3) { border-top: 1px solid var(--border); }
+  .stat .value, .ledger dd { font-size: 1.6rem; }
+  .deck-hero h1 { font-size: 2rem; }
+}
+/* A table straight under a section heading shares the heading's rule. */
+h2 + .table-wrap { border-top: 0; }
+.table-wrap { overflow-x: auto; border-top: 2px solid var(--rule); }
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
 tr:last-child td { border-bottom: none; }
-th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; }
+th { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 600; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 td.name { white-space: normal; }
 tfoot td { font-weight: 650; }
 .tag {
   display: inline-block;
-  font-size: 0.75rem;
-  padding: 1px 8px;
-  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  line-height: 1.6;
+  padding: 0 6px;
+  border-radius: 2px;
   border: 1px solid var(--border);
   color: var(--muted);
+  text-decoration: none;
 }
 .tag.ok { color: var(--ok); border-color: currentColor; }
 .tag.away { color: var(--away); border-color: currentColor; }
 .tag.warn { background: var(--warn-bg); color: var(--warn-text); border-color: transparent; }
 .callout {
-  background: var(--warn-bg);
-  color: var(--warn-text);
-  border-radius: 10px;
-  padding: 12px 16px;
-  margin: 16px 0;
+  background: color-mix(in srgb, var(--warn-bg) 55%, transparent);
+  color: var(--text);
+  border-left: 3px solid var(--warn-text);
+  padding: 10px 16px;
+  margin: 18px 0;
 }
+.callout strong { color: var(--warn-text); }
 .callout ul { margin: 6px 0 0; padding-left: 20px; }
 .empty { color: var(--muted); padding: 16px; }
 form.search { display: flex; gap: 8px; margin: 16px 0; }
@@ -140,7 +227,7 @@ form.search input {
   max-width: 360px;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -148,7 +235,7 @@ form.search input {
 form.search button {
   padding: 8px 14px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--accent);
   color: #fff;
   font: inherit;
@@ -157,7 +244,7 @@ form.search button {
 dl.meta { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 16px 0; }
 dl.meta dt { color: var(--muted); }
 dl.meta dd { margin: 0; }
-.flash { border-radius: 10px; padding: 10px 14px; margin: 16px 0; }
+.flash { border-radius: var(--radius); padding: 10px 14px; margin: 16px 0; }
 .flash.ok { background: color-mix(in srgb, var(--ok) 14%, var(--surface)); }
 .flash.err { background: var(--warn-bg); color: var(--warn-text); }
 a.tag.warn:hover { text-decoration: none; filter: brightness(0.95); }
@@ -170,7 +257,7 @@ a.tag.warn:hover { text-decoration: none; filter: brightness(0.95); }
 .printing {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -186,7 +273,7 @@ a.tag.warn:hover { text-decoration: none; filter: brightness(0.95); }
   gap: 8px;
   padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   cursor: pointer;
 }
 .option.match { border-color: var(--accent); }
@@ -203,7 +290,7 @@ a.tag.warn:hover { text-decoration: none; filter: brightness(0.95); }
 button.primary {
   padding: 10px 20px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--accent);
   color: #fff;
   font: inherit;
@@ -217,10 +304,10 @@ h3 { font-size: 1rem; margin: 24px 0 10px; }
 }
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .section-head h2 { margin-bottom: 12px; }
-.view-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.view-toggle a { padding: 4px 12px; color: var(--muted); font-size: 0.9rem; }
+.view-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.view-toggle a { padding: 4px 12px; color: var(--muted); font-size: 0.9rem; text-decoration: none; }
 .view-toggle a + a { border-left: 1px solid var(--border); }
-.view-toggle a[aria-current="page"] { background: var(--surface); color: var(--text); font-weight: 600; }
+.view-toggle a[aria-current="page"] { background: var(--text); color: var(--bg); font-weight: 600; }
 .view-toggle a:hover { text-decoration: none; color: var(--text); }
 /* Card images never shrink below --tile-min, the smallest width at which
    rules text stays readable; the grid fits as many columns as allow that
@@ -275,7 +362,7 @@ h3 { font-size: 1rem; margin: 24px 0 10px; }
   position: absolute;
   top: 8%;
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: 2px;
   font-size: 0.8rem;
   font-weight: 700;
   color: #fff;
@@ -290,13 +377,7 @@ h3 { font-size: 1rem; margin: 24px 0 10px; }
   /* Phones: two columns rather than one huge card. */
   .tile-grid { --tile-min: 140px; gap: 12px 8px; }
 }
-.commander-picker {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 14px;
-  margin: 4px 0 8px;
-}
+.commander-picker { margin: 0 0 14px; }
 .commander-picker summary { cursor: pointer; color: var(--accent); }
 .commander-picker summary strong { color: var(--text); }
 .commander-picker[open] summary { margin-bottom: 12px; }
@@ -347,7 +428,7 @@ h3 { font-size: 1rem; margin: 24px 0 10px; }
     overflow-y: auto;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: var(--radius);
     padding: 14px;
   }
   [data-card] { cursor: default; }
@@ -398,7 +479,7 @@ img.mana { width: 1em; height: 1em; vertical-align: -0.12em; margin: 0 1px; }
   transform: translateX(-50%);
   white-space: nowrap;
   padding: 2px 10px;
-  border-radius: 999px;
+  border-radius: 2px;
   font-size: 0.75rem;
   font-weight: 600;
   background: var(--warn-bg);
@@ -408,35 +489,38 @@ img.mana { width: 1em; height: 1em; vertical-align: -0.12em; margin: 0 1px; }
 .tile-flag:hover { text-decoration: none; filter: brightness(0.97); }
 
 /* Deck breakdown */
-.breakdown { margin: 8px 0 16px; }
-.breakdown > summary { cursor: pointer; color: var(--accent); font-weight: 600; margin-bottom: 10px; }
+.breakdown { margin: 0 0 8px; }
+.breakdown > summary { cursor: pointer; list-style: none; }
+.breakdown > summary::-webkit-details-marker { display: none; }
+.breakdown > summary h2 { display: flex; align-items: baseline; gap: 8px; }
+.breakdown > summary h2::after {
+  content: "Hide";
+  margin-left: auto;
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+.breakdown:not([open]) > summary h2::after { content: "Show"; }
 .breakdown-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
 .breakdown-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 14px 16px 16px;
+  border-top: 2px solid var(--rule);
+  padding: 10px 0 0;
   min-width: 0;
 }
-.breakdown-card h3 { margin: 0; font-size: 1rem; }
-.breakdown-sub { margin: 2px 0 14px; font-size: 0.85rem; }
+.breakdown-card h3 { margin: 0; }
+.breakdown-sub { margin: 2px 0 14px; font-size: 0.82rem; }
 .curve { display: flex; align-items: flex-end; gap: 4px; height: 150px; }
 .curve-col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; height: 100%; }
 .curve-count { font-size: 0.8rem; color: var(--muted); min-height: 1.2em; font-variant-numeric: tabular-nums; }
 .curve-track { flex: 1; width: 100%; display: flex; align-items: flex-end; border-bottom: 1px solid var(--border); }
-.curve-bar { width: 100%; background: var(--curve); border-radius: 4px 4px 0 0; }
+.curve-bar { width: 100%; background: var(--accent); border-radius: 2px 2px 0 0; }
 .curve-value {
-  margin-top: 6px;
-  width: 1.7em;
-  height: 1.7em;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 0.8rem;
-  font-weight: 650;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  font-variant-numeric: tabular-nums;
+  margin-top: 4px;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-variant-numeric: lining-nums tabular-nums;
 }
 .stack { display: flex; gap: 2px; height: 18px; border-radius: 4px; overflow: hidden; }
 .stack-seg { min-width: 3px; }
@@ -451,6 +535,7 @@ img.mana { width: 1em; height: 1em; vertical-align: -0.12em; margin: 0 1px; }
 .mana-G { background: var(--mana-G); }
 .mana-M { background: var(--mana-M); }
 .mana-C { background: var(--mana-C); }
+.mana-X { background: repeating-linear-gradient(45deg, var(--mana-C) 0 3px, transparent 3px 6px); }
 .series-1 { background: var(--series-1); }
 .series-2 { background: var(--series-2); }
 .series-3 { background: var(--series-3); }
@@ -484,7 +569,7 @@ img.mana { width: 1em; height: 1em; vertical-align: -0.12em; margin: 0 1px; }
   border-radius: 4px;
   font-size: 0.93rem;
 }
-.deck-row:nth-child(odd) { background: color-mix(in srgb, var(--border) 45%, transparent); }
+.deck-row:nth-child(odd) { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .deck-row:hover, .deck-row:focus { background: color-mix(in srgb, var(--accent) 16%, transparent); outline: none; }
 .deck-row-qty { font-weight: 650; text-align: right; font-variant-numeric: tabular-nums; }
 .deck-row-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -555,7 +640,7 @@ img.mana { width: 1em; height: 1em; vertical-align: -0.12em; margin: 0 1px; }
   display: inline-block;
   min-width: 1.4em;
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: 2px;
   background: var(--accent);
   color: #fff;
   font-size: 0.78rem;
@@ -565,7 +650,7 @@ img.mana { width: 1em; height: 1em; vertical-align: -0.12em; margin: 0 1px; }
   width: 100%;
   padding: 6px 9px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -574,7 +659,7 @@ img.mana { width: 1em; height: 1em; vertical-align: -0.12em; margin: 0 1px; }
 .filter-apply {
   padding: 5px 14px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--accent);
   color: #fff;
   font: inherit;
@@ -596,7 +681,7 @@ img.mana { width: 1em; height: 1em; vertical-align: -0.12em; margin: 0 1px; }
 .results-sort select {
   padding: 5px 8px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -611,7 +696,7 @@ img.mana { width: 1em; height: 1em; vertical-align: -0.12em; margin: 0 1px; }
     max-height: none;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: var(--radius);
     padding: 10px 14px;
   }
   .facets > summary { display: list-item; cursor: pointer; font-weight: 600; }
@@ -696,7 +781,7 @@ body:has(.card-dialog[open]) { overflow: hidden; }
 
 /* Deck modification page */
 .js-autosubmit .autosubmit-apply { display: none; }
-.changes, .candidates { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.changes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 /* A change: the card to add and the card it replaces, side by side at the
    readable tile size, then its details and controls. */
 .change {
@@ -707,7 +792,7 @@ body:has(.card-dialog[open]) { overflow: hidden; }
   padding: 14px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius);
 }
 .change.planned { border-style: dashed; }
 .change-cards { display: flex; align-items: center; gap: 10px; }
@@ -720,7 +805,7 @@ body:has(.card-dialog[open]) { overflow: hidden; }
 .pick-button {
   padding: 7px 14px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--accent);
   color: #fff;
   font: inherit;
@@ -733,7 +818,7 @@ body:has(.card-dialog[open]) { overflow: hidden; }
 .cut-picker {
   padding: 14px;
   border: 2px solid var(--accent);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--surface);
   scroll-margin-top: 16px;
 }
@@ -742,7 +827,7 @@ body:has(.card-dialog[open]) { overflow: hidden; }
 .pick-none {
   padding: 6px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -758,7 +843,7 @@ body:has(.card-dialog[open]) { overflow: hidden; }
 .candidate button {
   padding: 6px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -775,7 +860,7 @@ body:has(.card-dialog[open]) { overflow: hidden; }
   max-width: 100%;
   padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -787,7 +872,7 @@ body:has(.card-dialog[open]) { overflow: hidden; }
 .plan-form button, .change-link button, .change-cut button {
   padding: 6px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -801,7 +886,7 @@ body:has(.card-dialog[open]) { overflow: hidden; }
   gap: 10px 14px;
   margin-top: 14px;
   padding: 12px 14px;
-  border-radius: 10px;
+  border-radius: var(--radius);
   background: color-mix(in srgb, var(--accent) 8%, var(--surface));
   border: 1px solid var(--border);
 }
@@ -810,7 +895,7 @@ body:has(.card-dialog[open]) { overflow: hidden; }
 .apply-bar button[disabled] { opacity: 0.5; cursor: not-allowed; }
 .plan-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
 .versions { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
-.versions li { padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.versions li { padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .diff { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-size: 0.9rem; }
 .diff-add { color: var(--ok); }
 .diff-remove { color: var(--away); }
@@ -826,9 +911,90 @@ body:has(.card-dialog[open]) { overflow: hidden; }
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
   font: 0.92rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   resize: vertical;
 }
+
+/* Deck page header: eyebrow, name with mana pips, meta line. */
+.deck-hero { margin: 4px 0 0; }
+.eyebrow {
+  margin: 0 0 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.eyebrow a { color: var(--muted); }
+.deck-hero h1 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 2.6rem; }
+.pips { display: inline-flex; gap: 3px; vertical-align: middle; }
+.pips img.mana { width: 22px; height: 22px; margin: 0; }
+td.pips img.mana { width: 16px; height: 16px; }
+.deck-meta { margin: 0; color: var(--muted); }
+.deck-meta strong { color: var(--text); font-weight: 600; }
+.action-link { font-weight: 600; }
+/* Deck tables: each deck name carries its own identity color. */
+td.deck-name-cell a { font-family: var(--font-display); font-size: 1.1rem; font-weight: 600; }
+/* Card types: one hue, bars scaled to the largest type, counts written out. */
+.type-bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.type-bars li { display: grid; grid-template-columns: 7.5em minmax(0, 1fr) 2.2em; align-items: center; gap: 10px; font-size: 0.88rem; }
+.type-track { height: 10px; background: color-mix(in srgb, var(--accent-2, var(--accent)) 12%, transparent); border-radius: 2px; overflow: hidden; }
+.type-bar { display: block; height: 100%; background: var(--accent-2, var(--accent)); border-radius: 2px; }
+.type-count { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Deck pages: the strong rules (ledger, chart columns, list section heads)
+   become the deck's identity stripe, so every color shows, not just the
+   first. Drawn as a background line so the other borders stay hairlines. */
+body[data-identity] .ledger { border-top: 0; padding-top: 2px; background: var(--identity) top left / 100% 2px no-repeat; }
+body[data-identity] .breakdown-card { border-top: 0; padding-top: 12px; background: var(--identity) top left / 100% 2px no-repeat; }
+body[data-identity] .deck-section-head { border-bottom: 0; padding-bottom: 6px; background: var(--identity) bottom left / 100% 2px no-repeat; }
+
+/* Cards a deck lists but you don't own yet ("to acquire"): dashed
+   outline and faded art -- distinct from .away (owned, in another deck). */
+.tile.wanted .tile-art { outline: 2px dashed var(--accent); outline-offset: 3px; }
+.tile.wanted .tile-art img, .tile.wanted .tile-placeholder { opacity: 0.38; filter: saturate(0.5); }
+.tile-flag.acquire { background: var(--surface); color: var(--accent); border: 1px solid var(--accent); }
+.tag.acquire { color: var(--accent); border-color: var(--accent); border-style: dashed; }
+.deck-row.wanted .deck-row-name, .deck-row.wanted .deck-row-qty { color: var(--muted); font-style: italic; }
+.deck-row.wanted .deck-row-cost { opacity: 0.5; }
+/* Reassemble: physical checklists per source deck, and a shopping list. */
+.reassemble { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 8px 32px; }
+.reassemble h3 { margin: 0 0 8px; }
+.checklist { margin-bottom: 14px; }
+.checklist-head { font-family: var(--font-display); font-weight: 600; font-size: 1.05rem; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.checklist ul { list-style: none; margin: 4px 0 0; padding: 0; columns: 2 160px; column-gap: 20px; font-size: 0.9rem; }
+.checklist li { break-inside: avoid; padding: 2px 0; }
+.checklist-qty { display: inline-block; min-width: 1.6em; font-weight: 700; font-variant-numeric: tabular-nums; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--muted); width: min(100%, 420px); }
+.field input {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.95rem;
+}
+
+/* Modify page: cards you don't own, and the picker of yours to swap in. */
+.wanted-grid { margin-top: 8px; }
+.wanted-candidate .pick-button { width: 100%; }
+.wanted-grid > .own-picker { grid-column: 1 / -1; }
+.picker-section .same-type { display: none; }
+.picker-section.same h3 { color: var(--accent-2, var(--accent)); }
+.picker-section.same .same-type { display: inline; text-transform: none; letter-spacing: 0; font-weight: 600; }
+.pick-where { display: block; margin-top: 4px; font-size: 0.8rem; }
+.wanted-pick .tile-art img { opacity: 0.75; }
+
+/* Multicolor decks: each curve bar stacks its colors bottom-up (same
+   buckets/colors as the mana-colors chart), 2px gaps between segments. */
+.curve-stack { display: flex; flex-direction: column-reverse; gap: 2px; background: none; }
+.curve-seg { min-height: 2px; flex-basis: 0; }
+.curve-stack > .curve-seg:last-child { border-radius: 2px 2px 0 0; }
+.type-stack { display: flex; gap: 2px; background: none; }
+.type-seg { flex-basis: 0; min-width: 2px; height: 100%; }
+.type-stack > .type-seg:first-child { border-radius: 2px 0 0 2px; }
+.type-stack > .type-seg:last-child { border-radius: 0 2px 2px 0; }

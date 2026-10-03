@@ -107,7 +107,9 @@
       : "Not picked yet";
     for (const item of [
       // Merged cards on /cards can mix finishes: "2 (1 foil, 1 nonfoil)".
-      row("You have", /\d/.test(card.finish) ? `${card.qty} (${card.finish})` : `${card.qty}× ${card.finish}`),
+      card.wanted
+        ? row("You need", `${card.qty}×`)
+        : row("You have", /\d/.test(card.finish) ? `${card.qty} (${card.finish})` : `${card.qty}× ${card.finish}`),
       row("Printing", printing),
       card.decks && card.decks.length
         ? row(card.decks.length > 1 ? "Decks" : "Deck", deckList(card.decks))

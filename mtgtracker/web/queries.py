@@ -8,6 +8,7 @@ one deck's list and per-deck sums would double-count it.
 from __future__ import annotations
 
 import sqlite3
+from collections import Counter
 
 from mtgtracker import cardinfo
 from mtgtracker.decks import reassemble
@@ -73,18 +74,58 @@ def get_transaction(conn: sqlite3.Connection, transaction_id: int) -> dict | Non
     return {"txn": txn, "products": products, "receipts": receipts}
 
 
-def list_decks(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    return conn.execute(
+def list_decks(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute(
         """
         SELECT decks.*,
-               COUNT(deck_cards.lot_id) AS list_count,
-               COALESCE(SUM(deck_cards.equipped), 0) AS equipped_count
+               COUNT(deck_cards.lot_id) AS owned_count,
+               COALESCE(SUM(deck_cards.equipped), 0) AS equipped_count,
+               (SELECT COUNT(*) FROM deck_wants WHERE deck_wants.deck_id = decks.id) AS wanted_count
         FROM decks
         LEFT JOIN deck_cards ON deck_cards.deck_id = decks.id
         GROUP BY decks.id
         ORDER BY decks.id
         """
     ).fetchall()
+    identities = deck_identities(conn)
+    return [
+        {**dict(row), "identity": identities.get(row["id"], ()),
+         "list_count": row["owned_count"] + row["wanted_count"],
+         "elsewhere_count": row["owned_count"] - row["equipped_count"]}
+        for row in rows
+    ]
+
+
+def deck_identities(conn: sqlite3.Connection) -> dict[int, tuple[str, ...]]:
+    """deck_id -> its colors (cardinfo.deck_identity), for every deck, from
+    one query over all deck lists."""
+    rows = conn.execute(
+        """
+        SELECT deck_cards.deck_id, lots.card_name, MIN(lots.scryfall_id) AS scryfall_id,
+               MIN(lots.finish) AS finish, decks.commander
+        FROM deck_cards
+        JOIN lots ON lots.id = deck_cards.lot_id
+        JOIN decks ON decks.id = deck_cards.deck_id
+        GROUP BY deck_cards.deck_id, lots.card_name
+        UNION ALL
+        SELECT deck_wants.deck_id, deck_wants.card_name, MIN(deck_wants.scryfall_id),
+               'nonfoil', decks.commander
+        FROM deck_wants
+        JOIN decks ON decks.id = deck_wants.deck_id
+        GROUP BY deck_wants.deck_id, deck_wants.card_name
+        """
+    ).fetchall()
+    per_deck: dict[int, list[dict]] = {}
+    commanders: dict[int, str | None] = {}
+    for row in rows:
+        art = cardinfo.lookup(row["scryfall_id"], row["card_name"], row["finish"])
+        per_deck.setdefault(row["deck_id"], []).append(
+            {"card_name": row["card_name"], "art": art, "category": art.category(row["card_name"])}
+        )
+        commanders[row["deck_id"]] = row["commander"]
+    return {
+        deck_id: cardinfo.deck_identity(cards, commanders[deck_id]) for deck_id, cards in per_deck.items()
+    }
 
 
 def get_deck(
@@ -124,11 +165,17 @@ def get_deck(
         """,
         (*BASIC_LAND_NAMES, deck_id),
     ).fetchall()
+    owned = [{**g, "wanted": False} for g in _with_card_info(groups, conn)]
+    wanted = _wanted_rows(conn.execute(
+        "SELECT card_name, scryfall_id, COUNT(*) AS qty FROM deck_wants WHERE deck_id = ?"
+        " GROUP BY card_name, scryfall_id",
+        (deck_id,),
+    ))
     # Commander first, then the chosen sort (highest mana value by default);
     # both views split into type sections.
     commander = deck["commander"]
     groups = sorted(
-        _with_card_info(groups, conn),
+        owned + wanted,
         key=lambda g: (g["card_name"] != commander, cardinfo.mana_value_order(g["card_name"], g["art"])),
     )
     shown = sorted(
@@ -157,13 +204,53 @@ def get_deck(
         ],
         "shown_count": sum(g["qty"] for g in shown),
         "facets": filters.facet_counts(groups),
-        "breakdown": deck_breakdown(groups),
+        "breakdown": deck_breakdown(groups, cardinfo.deck_identity(groups, commander)),
+        "identity": cardinfo.deck_identity(groups, commander),
         "list_count": sum(g["qty"] for g in groups),
         "equipped_count": sum(g["qty"] for g in groups if g["equipped"]),
+        "elsewhere_count": sum(g["qty"] for g in owned if not g["equipped"]),
+        "wanted_count": sum(g["qty"] for g in wanted),
         "list_cost_cents": list_cost,
         "missing": reassemble(conn, deck_id),
+        "pull_from": _pull_groups(reassemble(conn, deck_id), conn),
+        "acquire": sorted(((g["card_name"], g["qty"]) for g in wanted), key=lambda item: item[0].casefold()),
         "deck_names": {row["id"]: row["name"] for row in conn.execute("SELECT id, name FROM decks")},
     }
+
+
+def _wanted_rows(rows) -> list[dict]:
+    """deck_wants groups as display rows (same shape as owned groups) with
+    wanted=True: not owned, so no lot, location, printing or cost."""
+    result = []
+    for row in rows:
+        art = cardinfo.lookup(row["scryfall_id"], row["card_name"], "nonfoil")
+        result.append({
+            "card_name": row["card_name"], "scryfall_id": row["scryfall_id"], "qty": row["qty"],
+            "set_code": None, "collector_number": None, "finish": "nonfoil", "needs_input": False,
+            "equipped": 0, "current_deck_id": None, "current_deck_name": None, "disposition_type": None,
+            "lot_id": None, "cost_cents": None, "decks": [], "art": art,
+            "category": art.category(row["card_name"]), "wanted": True,
+            "where": "Not owned yet: need to acquire", "printing": "Not owned yet",
+        })
+    return result
+
+
+def _pull_groups(missing: list[dict], conn: sqlite3.Connection) -> list[dict]:
+    """Reassemble rows grouped by where each card is now, as a physical
+    checklist: [{deck_id, deck_name, cards: [(name, qty)], total}]."""
+    names = {row[0]: row[1] for row in conn.execute("SELECT id, name FROM decks")}
+    groups: dict[int | None, Counter] = {}
+    for row in missing:
+        groups.setdefault(row["current_deck_id"], Counter())[row["card_name"]] += 1
+    return [
+        {
+            "deck_id": deck_id,
+            "deck_name": names.get(deck_id, "Not in any deck") if deck_id is not None else "Not in any deck",
+            "cards": sorted(counter.items(), key=lambda item: item[0].casefold()),
+            "total": sum(counter.values()),
+        }
+        for deck_id, counter in sorted(groups.items(), key=lambda item: (item[0] is None, item[0] or 0))
+    ]
 
 
 def count_cards(conn: sqlite3.Connection) -> int:
@@ -199,12 +286,19 @@ def search_cards(conn: sqlite3.Connection, query: str = "") -> list[dict]:
     )
 
 
-def lots_as_rows(conn: sqlite3.Connection, lot_ids: list[int], *, where: str) -> list[dict]:
+def lots_as_rows(
+    conn: sqlite3.Connection, lot_ids: list[int], *, where: str,
+    wants: list[tuple[str, str | None]] = (),
+) -> list[dict]:
     """These lots grouped by card name as display rows (like search_cards,
     ordered by mana value), for showing a past deck version. `where` is the
     location text the details panel shows."""
+    wanted_counts = Counter(wants)
+    wanted = _wanted_rows(
+        {"card_name": name, "scryfall_id": sid, "qty": n} for (name, sid), n in wanted_counts.items()
+    )
     if not lot_ids:
-        return []
+        return sorted(wanted, key=lambda r: cardinfo.mana_value_order(r["card_name"], r["art"]))
     marks = ",".join("?" * len(lot_ids))
     rows = conn.execute(
         f"""
@@ -221,7 +315,7 @@ def lots_as_rows(conn: sqlite3.Connection, lot_ids: list[int], *, where: str) ->
     for row in _with_card_info(rows, conn):
         row.update(where=where, disposition_type=None, current_deck_id=None, current_deck_name=None)
         result.append(row)
-    return sorted(result, key=lambda r: cardinfo.mana_value_order(r["card_name"], r["art"]))
+    return sorted(result + wanted, key=lambda r: cardinfo.mana_value_order(r["card_name"], r["art"]))
 
 
 def collapse_by_name(rows: list[dict]) -> list[dict]:

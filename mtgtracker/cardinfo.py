@@ -49,6 +49,9 @@ class CardInfo:
     # Card colors (Scryfall "colors", front face for double-faced cards):
     # e.g. ("R",), () for colorless; None when not cached.
     colors: tuple[str, ...] | None = None
+    # Color identity (Scryfall "color_identity"): mana symbols anywhere on
+    # the card, used for a deck's commander colors. None when not cached.
+    color_identity: tuple[str, ...] | None = None
 
     def category(self, card_name: str) -> str:
         if self.type_line:
@@ -108,6 +111,7 @@ def _info(card: dict, *, exact: bool) -> CardInfo:
         set_name=card.get("set_name"),
         artist=card.get("artist") or (faces[0].get("artist") if faces else None),
         colors=_colors(card),
+        color_identity=tuple(card["color_identity"]) if card.get("color_identity") is not None else None,
     )
 
 
@@ -163,8 +167,11 @@ def lookup(scryfall_id: str | None, card_name: str, finish: str = "nonfoil") -> 
 
     candidates = idx.by_name.get(scryfall._normalize(card_name), [])
     if not candidates:
-        # Basic lands cost nothing even when no printing is cached.
-        return CardInfo(None, None, exact=False, cmc=0.0 if card_name in BASIC_LAND_NAMES else None)
+        if card_name in BASIC_LAND_NAMES:
+            # A basic land's facts are known even with no printing cached.
+            return CardInfo(None, f"Basic Land — {card_name}", exact=False, cmc=0.0,
+                            colors=(), color_identity=())
+        return CardInfo(None, None, exact=False)
     best = min(
         candidates,
         key=lambda c: (
@@ -193,6 +200,25 @@ def color_weight(mana_cost: str) -> tuple[int, int]:
     colored = [sym for sym in symbols if any(c in sym for c in _COLORS)]
     distinct = {c for sym in colored for c in sym if c in _COLORS}
     return len(distinct), len(colored)
+
+
+WUBRG = "WUBRG"
+
+
+def deck_identity(rows: list[dict], commander: str | None = None) -> tuple[str, ...]:
+    """A deck's colors in WUBRG order, from display rows (each with
+    `card_name`, `category`, `art`): the commander's color identity when it
+    is known, else every color on the deck's non-land cards. () = colorless
+    (or nothing cached)."""
+    if commander:
+        for row in rows:
+            if row["card_name"] == commander and row["art"].color_identity is not None:
+                return tuple(c for c in WUBRG if c in row["art"].color_identity)
+    found: set[str] = set()
+    for row in rows:
+        if row["category"] != "Lands":
+            found |= set(row["art"].color_identity or row["art"].colors or ())
+    return tuple(c for c in WUBRG if c in found)
 
 
 def mana_value_order(card_name: str, info: CardInfo, *, descending: bool = True) -> tuple:

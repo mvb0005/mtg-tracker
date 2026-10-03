@@ -3,6 +3,15 @@
 {% block title %}Decks{% endblock %}
 {% block content %}
 <h1>Decks</h1>
-<p class="subtle">"On list" counts every card on the deck's list. "Equipped" counts the ones physically in the deck right now.</p>
+{% include "_flash.html" %}
+<p class="subtle">"On list" counts every card on the deck's list, owned or not. "Equipped" counts the ones physically in the deck right now.</p>
 {% include "_deck_table.html" %}
+
+<h2>New deck from a list</h2>
+<form class="import-form" method="post" action="/decks/new">
+  <p class="subtle">Paste a decklist from Moxfield, Archidekt, EDHREC or similar. The deck starts unassembled: cards you own are put on its list without moving them (Reassemble shows which deck to pull each from), and cards you don't own are listed as to acquire. A “Commander” section sets the commander.</p>
+  <label class="field">Deck name <input type="text" name="name" required maxlength="100" placeholder="e.g. Saheeli's Workshop"></label>
+  <textarea name="decklist" rows="10" required placeholder="Commander&#10;1 Saheeli, the Sun's Brilliance&#10;Deck&#10;1 Sol Ring&#10;14 Island" aria-label="Decklist"></textarea>
+  <button type="submit" class="primary">Create deck</button>
+</form>
 {% endblock %}

@@ -3,43 +3,60 @@
 {% block title %}{{ deck.name }}{% endblock %}
 {% import "_card_tiles.html" as cards with context %}
 {% block body_class %}with-panel wide{% endblock %}
+{% block body_attrs %}{{ theme_attrs(identity) }}{% endblock %}
 {% block panel %}{% include "_card_panel.html" %}{% endblock %}
 {% block content %}
-<p><a href="/decks">← Decks</a></p>
-<h1>{{ deck.name }}</h1>
-<p class="subtle">{{ deck.format }} · created {{ deck.created_at[:10] }}
-  · {% if deck.version %}<a href="/decks/{{ deck.id }}/versions/{{ deck.version }}">v{{ deck.version }}</a>{% else %}not versioned yet{% endif %}
-  · <a href="/decks/{{ deck.id }}/modify">Modify deck</a></p>
+<header class="deck-hero">
+  <p class="eyebrow"><a href="/decks">Decks</a> <span aria-hidden="true">/</span> {{ deck.format }}</p>
+  <h1>{{ deck.name }} <span class="pips" aria-label="Colors">{{ identity_pips(identity) }}</span></h1>
+  <p class="deck-meta">
+    {%- if deck.commander %}Led by <strong>{{ deck.commander }}</strong> · {% endif -%}
+    {% if deck.version %}<a href="/decks/{{ deck.id }}/versions/{{ deck.version }}">Version {{ deck.version }}</a>{% else %}Not versioned yet{% endif %}
+    · since {{ deck.created_at[:10] }}
+    · <a class="action-link" href="/decks/{{ deck.id }}/modify">Modify deck</a>
+  </p>
+</header>
 
-<div class="stats">
-  <div class="stat"><div class="label">On list</div><div class="value">{{ list_count }}</div></div>
-  <div class="stat"><div class="label">Equipped here</div><div class="value">{{ equipped_count }}</div></div>
-  <div class="stat"><div class="label">List cost basis</div><div class="value">{{ list_cost_cents | money }}</div></div>
-</div>
-<p class="subtle">List cost basis sums every card on this deck's list, including cards currently lent to other decks. A card that's on more than one list counts toward each deck.</p>
+{% include "_flash.html" %}
+<dl class="ledger">
+  <div><dt>On list</dt><dd>{{ list_count }}</dd></div>
+  <div><dt>Equipped here</dt><dd>{{ equipped_count }}</dd></div>
+  {% if elsewhere_count %}<div><dt>In other decks</dt><dd>{{ elsewhere_count }}</dd></div>{% endif %}
+  {% if wanted_count %}<div><dt>To acquire</dt><dd>{{ wanted_count }}</dd></div>{% endif %}
+  <div><dt>Cost basis</dt><dd>{{ list_cost_cents | money }}</dd></div>
+</dl>
+<p class="footnote">Cost basis sums the owned cards on this list, including ones lent to other decks, so a card on two lists counts toward both. Cards still to acquire aren't counted.</p>
 
 <h2>Reassemble</h2>
-{% if missing %}
-<p>Pull these {{ missing | length }} card{{ "s" if missing | length != 1 }} back to reassemble the list:</p>
-<div class="table-wrap">
-<table>
-  <thead><tr><th>Card</th><th>Currently in</th></tr></thead>
-  <tbody>
-  {% for row in missing %}
-    <tr>
-      <td class="name">{{ row.card_name }}</td>
-      <td>{% if row.current_deck_id is not none %}<a href="/decks/{{ row.current_deck_id }}">{{ deck_names[row.current_deck_id] }}</a>{% else %}<span class="subtle">unassigned</span>{% endif %}</td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-</div>
-{% else %}
+{% if not pull_from and not acquire %}
 <p><span class="tag ok">assembled</span> Every card on the list is in the deck.</p>
+{% else %}
+<div class="reassemble">
+  {% if pull_from %}
+  <section>
+    <h3>Pull from other decks <span class="subtle">({{ elsewhere_count }})</span></h3>
+    {% for g in pull_from %}
+    <div class="checklist">
+      <div class="checklist-head">{% if g.deck_id is not none %}<a href="/decks/{{ g.deck_id }}">{{ g.deck_name }}</a>{% else %}{{ g.deck_name }}{% endif %} <span class="subtle">· {{ g.total }}</span></div>
+      <ul>{% for name, n in g.cards %}<li><span class="checklist-qty">{{ n }}</span> {{ name }}</li>{% endfor %}</ul>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+  {% if acquire %}
+  <section>
+    <h3>Need to acquire <span class="subtle">({{ wanted_count }})</span></h3>
+    <div class="checklist">
+      <ul>{% for name, n in acquire %}<li><span class="checklist-qty">{{ n }}</span> {{ name }}</li>{% endfor %}</ul>
+    </div>
+  </section>
+  {% endif %}
+</div>
 {% endif %}
 
+{% if groups %}{% include "_deck_breakdown.html" %}{% endif %}
+
 <h2>Decklist</h2>
-{% include "_flash.html" %}
 {% if deck.format == "Commander" %}
 <details class="commander-picker"{% if not deck.commander %} open{% endif %}>
   <summary>{% if deck.commander %}Commander: <strong>{{ deck.commander }}</strong> · change{% else %}Choose a commander{% endif %}</summary>
@@ -66,7 +83,6 @@
   {% endif %}
 </details>
 {% endif %}
-{% if groups %}{% include "_deck_breakdown.html" %}{% endif %}
 {% if not groups %}
 <p class="empty">This deck's list is empty.</p>
 {% else %}

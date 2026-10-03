@@ -75,6 +75,34 @@ def mana_symbols(cost: str | None) -> Markup:
 templates.env.filters["mana_symbols"] = mana_symbols
 
 
+def theme_attrs(identity) -> Markup:
+    """Body attributes that theme a deck page by its colors: --accent is the
+    first color's ink (links, buttons, labels), --accent-2 the last color's
+    (secondary data), --identity a hard-stop stripe of all of them
+    (colorless decks use the neutral ink). Only W/U/B/R/G ever reach the
+    markup."""
+    colors = [c for c in (identity or ()) if c in "WUBRG"] or ["C"]
+    n = len(colors)
+    stops = ", ".join(
+        f"var(--ink-{c}) {100 * i / n:.2f}% {100 * (i + 1) / n:.2f}%" for i, c in enumerate(colors)
+    )
+    template = (
+        'data-identity="{}" style="--accent: var(--ink-{}); --accent-2: var(--ink-{});'
+        ' --identity: linear-gradient(90deg, {})"'
+    )
+    return Markup(template).format("".join(colors), colors[0], colors[-1], Markup(stops))
+
+
+def identity_pips(identity) -> Markup:
+    """A deck's colors as mana symbols ({C} for colorless)."""
+    colors = [c for c in (identity or ()) if c in "WUBRG"] or ["C"]
+    return mana_symbols("".join(f"{{{c}}}" for c in colors))
+
+
+templates.env.globals["theme_attrs"] = theme_attrs
+templates.env.globals["identity_pips"] = identity_pips
+
+
 @functools.cache
 def static_version(path: str) -> str:
     """Short content hash of a static file, appended as ?v= so browsers can
@@ -161,8 +189,24 @@ def create_app(db_path: str | Path) -> FastAPI:
         return render(request, "transaction_detail.html", **detail)
 
     @app.get("/decks", response_class=HTMLResponse)
-    def decks(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-        return render(request, "decks.html", decks=queries.list_decks(conn))
+    def decks(
+        request: Request, notice: str = "", error: str = "", conn: sqlite3.Connection = Depends(get_conn)
+    ):
+        return render(request, "decks.html", decks=queries.list_decks(conn), notice=notice, error=error)
+
+    @app.post("/decks/new")
+    async def deck_new(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+        form = await request.form()
+        text = str(form.get("decklist", ""))
+        if len(text) > 50_000:
+            return redirect("/decks", error="That list is too long")
+        try:
+            summary = deckmods.create_deck_from_list(conn, str(form.get("name", "")), text)
+        except deckmods.ChangeError as exc:
+            return redirect("/decks", error=str(exc))
+        except httpx.HTTPError:
+            return redirect("/decks", error="Couldn't reach Scryfall")
+        return redirect(f"/decks/{summary.deck_id}", notice=summary.message())
 
     @app.get("/decks/{deck_id}", response_class=HTMLResponse)
     def deck_detail(
@@ -247,7 +291,7 @@ def create_app(db_path: str | Path) -> FastAPI:
             art = cardinfo.lookup(change["add_scryfall_id"], change["add_card_name"],
                                   change["add_finish"] or "nonfoil")
             if not change["ready"]:
-                where = "Not owned yet (to buy)"
+                where = "Not owned yet (to acquire)"
             elif change["add_from_deck_name"]:
                 where = f"In {change['add_from_deck_name']} (would be borrowed)"
             else:
@@ -265,6 +309,28 @@ def create_app(db_path: str | Path) -> FastAPI:
             change["owned_copies"] = (
                 [] if change["ready"] else deckmods.owned_copies_of(conn, deck_id, change["add_card_name"])
             )
+
+        identity = queries.deck_identities(conn).get(deck_id, ())
+        # Cards the deck lists but you don't own, each replaceable by one you do.
+        wanted = []
+        for group in deckmods.wanted_groups(conn, deck_id):
+            art = cardinfo.lookup(group["scryfall_id"], group["card_name"], "nonfoil")
+            row = {
+                "card_name": group["card_name"], "art": art, "qty": group["qty"], "finish": "nonfoil",
+                "set_code": None, "collector_number": None, "cost_cents": None, "decks": [],
+                "disposition_type": None, "category": art.category(group["card_name"]),
+                "wanted": True, "where": "Not owned yet: need to acquire", "printing": "Not owned yet",
+            }
+            wanted.append({**group, "row": row})
+        owned_rows = []
+        for item in deckmods.owned_fitting(conn, deck_id, identity):
+            owned_rows.append({
+                **item, "category": item["art"].category(item["card_name"]), "decks": [],
+                "disposition_type": None,
+                "where": (f"In {item['holder_name']}" if item["holder_name"]
+                          else "In your collection, not in a deck"),
+            })
+        owned_rows.sort(key=lambda r: cardinfo.mana_value_order(r["card_name"], r["art"]))
 
         cut_choices = []
         for option in deckmods.cut_options(conn, deck_id):
@@ -285,10 +351,14 @@ def create_app(db_path: str | Path) -> FastAPI:
             )
         return render(
             request, "deck_modify.html", status_code=status_code,
+            identity=identity,
             deck=deck, pending=pending, ready_count=len(ready),
-            size=size, size_after=size + len(ready) - sum(1 for c in ready if c["cut_lot_id"]),
+            size=size, size_after=size + len(pending) - sum(1 for c in pending if c["cut_lot_id"]),
             cut_options=deckmods.cut_options(conn, deck_id),
             cut_sections=queries.sections_by_type(cut_choices),
+            wanted=[w for w in wanted if w["want_id"] is not None],
+            wanted_total=sum(w["qty"] for w in wanted),
+            own_sections=queries.sections_by_type(owned_rows), own_count=len(owned_rows),
             candidates=candidates, q=q,
             versions=deckmods.versions(conn, deck_id),
             notice=notice, error=error,
@@ -328,7 +398,7 @@ def create_app(db_path: str | Path) -> FastAPI:
                                  "Added to the change list.", q)
         name = str(form.get("planned_name", ""))
         return change_action(deck_id, conn, lambda: deckmods.add_planned(conn, deck_id, name),
-                             "Added to the change list as planned (to buy).", q)
+                             "Added to the change list as to acquire.", q)
 
     @app.post("/decks/{deck_id}/import")
     async def deck_import_list(deck_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
@@ -342,9 +412,24 @@ def create_app(db_path: str | Path) -> FastAPI:
     async def deck_change_cut(
         deck_id: int, change_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ):
-        cut = form_int((await request.form()).get("cut_lot_id"))
-        return change_action(deck_id, conn, lambda: deckmods.set_cut(conn, deck_id, change_id, cut),
-                             "Replacement updated.")
+        form = await request.form()
+        cut, cut_want = form_int(form.get("cut_lot_id")), form_int(form.get("cut_want_id"))
+        return change_action(
+            deck_id, conn, lambda: deckmods.set_cut(conn, deck_id, change_id, cut, cut_want_id=cut_want),
+            "Replacement updated.",
+        )
+
+    @app.post("/decks/{deck_id}/swaps")
+    async def deck_swap(deck_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+        """Replace a card the deck lists but you don't own with one you do."""
+        form = await request.form()
+        lot_id, want_id = form_int(form.get("lot_id")), form_int(form.get("want_id"))
+        if lot_id is None or want_id is None:
+            return redirect(
+                f"/decks/{deck_id}/modify", error="Pick a card to replace and one of yours to use"
+            )
+        return change_action(deck_id, conn, lambda: deckmods.add_swap(conn, deck_id, lot_id, want_id),
+                             "Queued the swap; apply to make it the next version.")
 
     @app.post("/decks/{deck_id}/changes/{change_id}/link")
     async def deck_change_link(
@@ -376,10 +461,12 @@ def create_app(db_path: str | Path) -> FastAPI:
         lot_ids = deckmods.version_lot_ids(conn, deck_id, version) if deck else None
         if lot_ids is None:
             raise HTTPException(status_code=404, detail="No such deck version")
-        rows = queries.lots_as_rows(conn, lot_ids, where=f"On the v{version} list")
+        rows = queries.lots_as_rows(conn, lot_ids, where=f"On the v{version} list",
+                                    wants=deckmods.version_wants(conn, deck_id, version))
         info = next(v for v in deckmods.versions(conn, deck_id) if v["version"] == version)
         return render(
             request, "deck_version.html", deck=deck, version=info,
+            identity=queries.deck_identities(conn).get(deck_id, ()),
             sections=queries.sections_by_type(rows), total=sum(r["qty"] for r in rows),
         )
 

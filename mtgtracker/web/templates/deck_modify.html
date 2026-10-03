@@ -3,6 +3,7 @@
 {% block title %}Modify {{ deck.name }}{% endblock %}
 {% import "_card_tiles.html" as cards with context %}
 {% block body_class %}with-panel{% endblock %}
+{% block body_attrs %}{{ theme_attrs(identity) }}{% endblock %}
 {% block panel %}{% include "_card_panel.html" %}{% endblock %}
 {% block content %}
 <p><a href="/decks/{{ deck.id }}">← {{ deck.name }}</a></p>
@@ -34,7 +35,7 @@
     <div class="change-body">
       <div class="change-title">
         <strong>{{ c.add_card_name }}</strong>
-        {% if not c.ready %}<span class="tag warn">to buy</span>
+        {% if not c.ready %}<span class="tag acquire">to acquire</span>
         {% elif c.add_from_deck_id is not none %}<span class="tag away">takes it from {{ c.add_from_deck_name }}</span>
         {% else %}<span class="tag">from your collection</span>{% endif %}
       </div>
@@ -45,8 +46,9 @@
       <p class="subtle change-hint">This replaces the commander; the deck will have no commander until you choose one.</p>
       {% endif %}
       <div class="change-actions">
-        <button type="button" class="pick-button" data-pick-cut="/decks/{{ deck.id }}/changes/{{ c.id }}/cut"
-                data-pick-title="{{ c.add_card_name }} replaces…" aria-controls="cut-picker" aria-expanded="false" hidden>
+        <button type="button" class="pick-button" data-picker="cut-picker" data-anchor=".change"
+                data-action="/decks/{{ deck.id }}/changes/{{ c.id }}/cut"
+                data-title="{{ c.add_card_name }} replaces…" aria-controls="cut-picker" aria-expanded="false" hidden>
           {{ "Change replacement" if c.cut_row else "Choose a card to replace" }}
         </button>
         <noscript>
@@ -76,7 +78,7 @@
           <button type="submit">Link</button>
         </form>
         {% else %}
-        <p class="subtle change-hint">You don't own a copy yet, so this stays pending when you apply.</p>
+        <p class="subtle change-hint">You don't own a copy yet; applying puts it on the list as “to acquire”.</p>
         {% endif %}
       {% endif %}
     </div>
@@ -103,21 +105,82 @@
         {% endfor %}
       </div>
       {% endfor %}
+      {% if wanted %}
+      <h3>To acquire <span class="subtle">({{ wanted | sum(attribute="available") }})</span></h3>
+      <div class="tile-grid">
+        {% for w in wanted %}
+        <button type="submit" name="cut_want_id" value="{{ w.want_id }}" class="pick-tile wanted-pick" aria-label="Replace {{ w.card_name }} (not owned)">
+          {{ cards.card_face(w.row, "deck") }}
+        </button>
+        {% endfor %}
+      </div>
+      {% endif %}
     </form>
   </li>
 </ul>
 
 <form class="apply-bar" method="post" action="/decks/{{ deck.id }}/apply">
   <p>
-    <strong>{{ ready_count }}</strong> ready change{{ "s" if ready_count != 1 }} → <strong>v{{ deck.version + 1 }}</strong>
+    <strong>{{ pending | length }}</strong> change{{ "s" if pending | length != 1 }} → <strong>v{{ deck.version + 1 }}</strong>
     · list {{ size }} → {{ size_after }} cards
-    {%- if planned_count %} · {{ planned_count }} planned stay{{ "s" if planned_count == 1 }} pending{% endif %}
+    {%- if planned_count %} · {{ planned_count }} to acquire{% endif %}
   </p>
   <input type="text" name="note" maxlength="200" placeholder="Note (optional), e.g. “More ramp”" aria-label="Version note">
-  <button type="submit" class="primary"{% if not ready_count %} disabled{% endif %}>Apply as v{{ deck.version + 1 }}</button>
+  <button type="submit" class="primary">Apply as v{{ deck.version + 1 }}</button>
 </form>
 {% else %}
 <p class="subtle">No changes queued. Search for a card below, or import a list.</p>
+{% endif %}
+
+{% if wanted %}
+<h2>Cards you don't own <span class="subtle">({{ wanted_total }})</span></h2>
+<p class="subtle">Swap any of these for a card you already own. Only cards that fit this deck's colors are offered, with the same card type first; the swap is queued above and applies with the next version.</p>
+<div class="tile-grid wanted-grid">
+  {% for w in wanted %}
+  <div class="candidate wanted-candidate">
+    {{ cards.card_face(w.row, "deck") }}
+    <button type="button" class="pick-button" data-picker="own-picker" data-anchor=".candidate"
+            data-want-id="{{ w.want_id }}" data-category="{{ w.row.category }}"
+            data-title="Replace {{ w.card_name }} with one of yours…" aria-controls="own-picker" aria-expanded="false" hidden>
+      Use one I own
+    </button>
+  </div>
+  {% endfor %}
+  {#- One shared picker of your cards that fit, moved under whichever card
+      opened it (deck-modify.js), sections reordered so its type is first. -#}
+  <div id="own-picker" class="cut-picker own-picker" hidden>
+    <form method="post" action="/decks/{{ deck.id }}/swaps">
+      <input type="hidden" name="want_id" value="">
+      <div class="cut-picker-head">
+        <strong class="cut-picker-title">Replace with one of yours…</strong>
+        <span class="subtle">{{ own_count }} of your cards fit</span>
+        <button type="button" class="link-button" data-picker-close>Cancel</button>
+      </div>
+      {% for label, rows, count in own_sections %}
+      <section class="picker-section" data-category="{{ label }}">
+        <h3>{{ label }} <span class="subtle">({{ count }})</span><span class="same-type"> · same type</span></h3>
+        <div class="tile-grid">
+          {% for r in rows %}
+          <button type="submit" name="lot_id" value="{{ r.lot_id }}" class="pick-tile" aria-label="Use your {{ r.card_name }}">
+            {{ cards.card_face(r, "cards") }}
+            <span class="pick-where subtle">{{ r.where }}</span>
+          </button>
+          {% endfor %}
+        </div>
+      </section>
+      {% else %}
+      <p class="subtle">None of your cards outside this deck fit its colors.</p>
+      {% endfor %}
+    </form>
+  </div>
+</div>
+<noscript>
+  <form class="change-link" method="post" action="/decks/{{ deck.id }}/swaps">
+    <label>Replace <select name="want_id">{% for w in wanted %}<option value="{{ w.want_id }}">{{ w.card_name }}</option>{% endfor %}</select></label>
+    <label>with <select name="lot_id">{% for label, rows, count in own_sections %}{% for r in rows %}<option value="{{ r.lot_id }}">{{ r.card_name }} ({{ r.where }})</option>{% endfor %}{% endfor %}</select></label>
+    <button type="submit">Queue swap</button>
+  </form>
+</noscript>
 {% endif %}
 
 <h2>Add a card</h2>
@@ -147,14 +210,14 @@
   <form class="plan-form" method="post" action="/decks/{{ deck.id }}/changes">
     <input type="hidden" name="planned_name" value="{{ q }}">
     <input type="hidden" name="q" value="{{ q }}">
-    <button type="submit">Plan to buy “{{ q }}”</button>
+    <button type="submit">Plan to acquire “{{ q }}”</button>
     <span class="subtle">Looks the card up on Scryfall.</span>
   </form>
 {% endif %}
 
 <h2>Import a list</h2>
 <form class="import-form" method="post" action="/decks/{{ deck.id }}/import">
-  <p class="subtle">Paste a decklist from Moxfield, Archidekt, Arena or similar: one card per line, e.g. “1 Sol Ring”. Cards already in the deck or already queued are skipped; cards you own are used first and the rest are queued to buy. Sideboard/maybeboard sections are ignored.</p>
+  <p class="subtle">Paste a decklist from Moxfield, Archidekt, Arena or similar: one card per line, e.g. “1 Sol Ring”. Cards already on the deck's list (owned or to acquire) or already queued are skipped; cards you own are used first and the rest are queued to acquire. Sideboard/maybeboard sections are ignored.</p>
   <textarea name="decklist" rows="10" placeholder="1 Academy Ruins&#10;1 Expedition Map&#10;1 Mystic Forge" aria-label="Decklist"></textarea>
   <button type="submit" class="primary">Queue these cards</button>
 </form>
