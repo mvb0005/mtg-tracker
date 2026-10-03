@@ -116,13 +116,14 @@ Each bucket carries a CSS `fill` (`_fill`), which templates use as inline `backg
   - In `cloudflare` mode, the Access JWT (header or `CF_Authorization` cookie) is verified with RS256 against the team's keys, checking `aud` (`CF_ACCESS_AUD`), `iss` (`https://CF_ACCESS_TEAM_DOMAIN`) and `exp`.
   - Its email must match an existing user: an allowlist, never auto-created. `MTG_OWNER_EMAIL` claims user 1 on its first sign-in.
   - Loopback clients act as user 1 so port-forward works. That's only safe because uvicorn runs with `proxy_headers=False` and cloudflared runs in its own pod.
-  - Anything else gets the 401 `signed_out.html`. `/static/` needs no identity.
+  - Anything else gets the 401 `signed_out.html`. `/static/` and `/healthz` (the k8s probes) need no identity.
 - **Scoping:** `request.state.user` is set by the `identify` middleware. List queries take an `owner_id`.
 - **Visibility:** friends can view each other's decks, deck versions, `/people/{id}` and `/people/{id}/cards`, with `can_edit=False`, so there's no Modify, commander picker, printing links or cost-sort.
   - Money stays private: someone else's lot shows cost `None`, a deck's cost basis shows only to its owner, and another user's transaction is a 404.
 - **Write guards:** every write route calls `require_own_deck` / `require_own_lot` on every id it's posted (403). `deckmods`' candidate and free-lot queries offer only the deck owner's lots, and `_check_insertable` refuses others' lots too.
 - **Acting for others:** `users.can_act_for` lets an admin act for someone who has never signed in. It's used by the coming loans phase.
-- **Admins:** an admin adds people at `/people`.
+- **Admins:** an admin adds people at `/people`, but only in `dev`/`cloudflare` mode. In `single` mode every visitor is the admin, so the web can't touch the allowlist there; use `mtg add-user`.
+- **`can_edit` fails closed:** `render()` defaults it to False, and pages pass True only when the viewer owns what's shown. Gate every new owner-only control on it.
 
 **Commander:** `mtgtracker/commanders.py` lets any legendary creature on a Commander-format deck's list be its commander, checked against the cached type line. The deck page has the picker (`POST /decks/{id}/commander`). There is one commander per deck, with no partners. A middleware rejects POSTs whose `Origin` doesn't match `Host`, or that carry `Sec-Fetch-Site: cross-site`. Write routes use POST, then a 303 redirect, with the notice or error passed as a query param.
 

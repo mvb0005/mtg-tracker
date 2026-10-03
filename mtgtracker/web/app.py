@@ -147,7 +147,8 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
 
     def render(request: Request, template: str, status_code: int = 200, **context) -> HTMLResponse:
         context.setdefault("user", getattr(request.state, "user", None))
-        context.setdefault("can_edit", True)
+        context.setdefault("can_edit", False)  # owner-only controls are opt-in per page
+        context.setdefault("can_add_people", False)
         context.setdefault("auth_mode", auth.mode)
         return templates.TemplateResponse(request, template, context, status_code=status_code)
 
@@ -158,8 +159,8 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
     @app.middleware("http")
     async def identify(request: Request, call_next):
         """Who's asking (web/auth.py), as request.state.user. Static files
-        need no identity."""
-        if not request.url.path.startswith("/static/"):
+        and the kubelet's /healthz probe need no identity."""
+        if not (request.url.path.startswith("/static/") or request.url.path == "/healthz"):
             conn = db.connect(db_path, check_same_thread=False)
             try:
                 request.state.user = resolve_user(
@@ -173,6 +174,10 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
             finally:
                 conn.close()
         return await call_next(request)
+
+    @app.get("/healthz", response_class=PlainTextResponse)
+    def healthz():
+        return "ok"
 
     if auth.mode == "dev":
         @app.get("/dev/as/{user_id}")
@@ -380,12 +385,20 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
                 "decks": len(queries.list_decks(conn, person.id)),
                 "cards": queries.count_cards(conn, person.id),
             })
-        return render(request, "people.html", people=rows, notice=notice, error=error)
+        return render(request, "people.html", people=rows, notice=notice, error=error,
+                      can_add_people=may_add_people(request))
+
+    def may_add_people(request: Request) -> bool:
+        """Adding a person adds an email to the sign-in allowlist. In single
+        mode every visitor is the admin, so the web form stays off there
+        (use `mtg add-user`) -- otherwise a stranger on the public site could
+        pre-authorize themselves for when Cloudflare sign-in is turned on."""
+        return auth.mode in ("dev", "cloudflare") and me(request).is_admin
 
     @app.post("/people")
     async def people_add(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-        if not me(request).is_admin:
-            raise HTTPException(status_code=403, detail="Only an admin can add people")
+        if not may_add_people(request):
+            raise HTTPException(status_code=403, detail="Only a signed-in admin can add people")
         form = await request.form()
         try:
             person = users.create(conn, str(form.get("display_name", "")), str(form.get("email", "")))
@@ -493,7 +506,7 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
                 decks=[], disposition_type=None, cost_cents=None,
             )
         return render(
-            request, "deck_modify.html", status_code=status_code,
+            request, "deck_modify.html", status_code=status_code, can_edit=True,
             identity=identity,
             deck=deck, pending=pending, ready_count=len(ready),
             size=size, size_after=size + len(pending) - sum(1 for c in pending if c["cut_lot_id"]),
@@ -623,6 +636,7 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
         return render(
             request, "deck_version.html", deck=deck, version=info,
             identity=queries.deck_identities(conn).get(deck_id, ()),
+            can_edit=deck["owner_id"] == me(request).id,
             sections=queries.sections_by_type(rows), total=sum(r["qty"] for r in rows),
         )
 

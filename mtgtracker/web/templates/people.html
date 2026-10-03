@@ -21,7 +21,7 @@
 </table>
 </div>
 
-{% if user.is_admin %}
+{% if can_add_people %}
 <h2>Add a person</h2>
 <form class="import-form" method="post" action="/people">
   <p class="subtle">They can sign in once their email is allowed in Cloudflare Access. Until they do, you can import their collection and act for them on borrow requests.</p>

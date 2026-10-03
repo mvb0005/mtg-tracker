@@ -1,4 +1,5 @@
 import re
+import sqlite3
 import time
 
 import jwt
@@ -51,6 +52,60 @@ def _client(db_path, user_id):
     return client
 
 
+def test_migration_0006_rebuilds_populated_lots(tmp_path):
+    """v5 -> v6 on a populated DB: lots is rebuilt in place, every row and id
+    survives, everything belongs to user 1, and the tables that reference
+    lots still line up (foreign keys on, no violations)."""
+    conn = sqlite3.connect(tmp_path / "v5.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    for index, path in enumerate(db._migration_files()[:5], start=1):
+        conn.executescript(path.read_text())
+        conn.execute(f"PRAGMA user_version = {index}")
+    conn.execute(
+        "INSERT INTO transactions (id, order_type_identifier, order_identifier, vendor,"
+        " created_at, updated_at, subtotal_cents, tax_cents, total_cents, source)"
+        " VALUES (7, 't', 'o', 'Shop', '2026-01-01', '2026-01-01', 300, 0, 300, 'manual')"
+    )
+    conn.execute(
+        "INSERT INTO decks (id, name, format, created_at) VALUES (3, 'D', 'Commander', '2026-01-01')"
+    )
+    for lot_id in (11, 12, 13):
+        conn.execute(
+            "INSERT INTO lots (id, transaction_id, card_name, allocated_cost_cents, acquired_date)"
+            " VALUES (?, 7, ?, 100, '2026-01-01')",
+            (lot_id, f"Card {lot_id}"),
+        )
+    conn.execute("INSERT INTO deck_cards (deck_id, lot_id, equipped) VALUES (3, 11, 1), (3, 12, 0)")
+    conn.execute(
+        "INSERT INTO dispositions (lot_id, disposed_at, disposition_type) VALUES (13, '2026-02-01', 'sold')"
+    )
+    conn.execute(
+        "INSERT INTO deck_versions (id, deck_id, version, created_at) VALUES (1, 3, 1, '2026-01-01')"
+    )
+    conn.execute("INSERT INTO deck_version_cards (version_id, lot_id) VALUES (1, 11), (1, 12)")
+    conn.execute(
+        "INSERT INTO deck_changes (deck_id, add_card_name, add_lot_id, cut_lot_id, created_at)"
+        " VALUES (3, 'Card 12', 12, 11, '2026-01-01')"
+    )
+    conn.commit()
+
+    assert db.migrate(conn) == len(db._migration_files())
+    lots = conn.execute(
+        "SELECT id, owner_id, transaction_id, allocated_cost_cents FROM lots ORDER BY id"
+    ).fetchall()
+    assert [tuple(r) for r in lots] == [(11, 1, 7, 100), (12, 1, 7, 100), (13, 1, 7, 100)]
+    assert conn.execute("SELECT owner_id FROM decks").fetchone()[0] == 1
+    assert conn.execute("SELECT owner_id FROM transactions").fetchone()[0] == 1
+    for table, n in (("deck_cards", 2), ("dispositions", 1), ("deck_version_cards", 2), ("deck_changes", 1)):
+        assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == n
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    with pytest.raises(sqlite3.IntegrityError):  # deck_cards still points at lots
+        conn.execute("INSERT INTO deck_cards (deck_id, lot_id, equipped) VALUES (3, 999, 0)")
+    conn.close()
+
+
 def test_migration_allows_cards_without_a_purchase(db_path):
     conn = db.connect(db_path)
     cur = conn.execute("INSERT INTO lots (card_name, acquired_date) VALUES ('Sol Ring', '2026-10-01')")
@@ -72,9 +127,10 @@ def test_each_user_sees_only_their_own(db_path, two_users):
     dashboard = friend.get("/").text
     assert "Total spent" in dashboard
     assert "$0.00" in dashboard  # no purchases
+    me = _client(db_path, 1)
+    assert me.get("/transactions/1").status_code == 200
     assert friend.get("/transactions/1").status_code == 404  # your purchase is private
 
-    me = _client(db_path, 1)
     assert "Alex Blue" not in me.get("/decks").text
     assert "Rhystic Study" not in me.get("/cards").text
 
@@ -92,7 +148,10 @@ def test_friends_can_view_each_others_decks_read_only(db_path, two_users):
     assert '"cost": "\\u2014"' in html
     assert '"cost": "$' not in html
     assert "needs printing" not in html
-    assert friend.get(f"/decks/{two_users['keen']}/versions/1").status_code == 200
+    version = friend.get(f"/decks/{two_users['keen']}/versions/1")
+    assert version.status_code == 200
+    assert "needs printing" not in version.text
+    assert '"cost": "$' not in version.text
 
     people = friend.get("/people").text
     assert "Alex" in people
@@ -131,6 +190,41 @@ def test_every_write_rejects_someone_elses_ids(db_path, two_users):
         assert resp.status_code == 403, (method, url, resp.status_code)
 
 
+def test_your_change_and_want_ids_are_useless_on_a_friends_deck(db_path, two_users):
+    """The deck guard passes (it's their deck), so the change/want id itself
+    must be scoped to the deck: your pending change and wanted card survive."""
+    conn = db.connect(db_path)
+    keen, theirs = two_users["keen"], two_users["friend_lots"][1]
+    want = conn.execute(
+        "INSERT INTO deck_wants (deck_id, card_name, created_at) VALUES (?, 'Sol Ring', '2026-10-01')",
+        (keen,),
+    ).lastrowid
+    change = conn.execute(
+        "INSERT INTO deck_changes (deck_id, add_card_name, created_at)"
+        " VALUES (?, 'Arcane Signet', '2026-10-01')",
+        (keen,),
+    ).lastrowid
+    conn.commit()
+    friend = _client(db_path, two_users["friend"].id)
+    deck = two_users["friend_deck"]
+    for url, data in [
+        (f"/decks/{deck}/changes/{change}/delete", {}),
+        (f"/decks/{deck}/changes/{change}/cut", {"cut_want_id": str(want)}),
+        (f"/decks/{deck}/changes/{change}/link", {"lot_id": str(theirs)}),
+        (f"/decks/{deck}/swaps", {"lot_id": str(theirs), "want_id": str(want)}),
+    ]:
+        resp = friend.post(url, data=data, follow_redirects=False)
+        assert resp.status_code == 303, url
+        assert "error=" in resp.headers["location"], url
+    row = conn.execute(
+        "SELECT deck_id, add_lot_id, cut_want_id FROM deck_changes WHERE id = ?", (change,)
+    ).fetchone()
+    assert tuple(row) == (keen, None, None)
+    assert conn.execute("SELECT COUNT(*) FROM deck_changes WHERE deck_id = ?", (deck,)).fetchone()[0] == 0
+    assert conn.execute("SELECT deck_id FROM deck_wants WHERE id = ?", (want,)).fetchone()[0] == keen
+    conn.close()
+
+
 def test_admin_adds_people(db_path, two_users):
     me = _client(db_path, 1)
     resp = me.post(
@@ -142,6 +236,18 @@ def test_admin_adds_people(db_path, two_users):
     )
     assert "already+a+user" in dup.headers["location"]
     assert "hasn&#39;t signed in" in me.get("/people").text or "hasn't signed in" in me.get("/people").text
+
+
+def test_single_mode_cannot_add_people(db_path, cache_dir):
+    """In single mode every visitor is the admin, so the web can't touch the
+    sign-in allowlist (use `mtg add-user`)."""
+    client = TestClient(create_app(db_path))
+    assert "Add a person" not in client.get("/people").text
+    resp = client.post("/people", data={"display_name": "Eve", "email": "eve@example.com"})
+    assert resp.status_code == 403
+    conn = db.connect(db_path)
+    assert users.by_email(conn, "eve@example.com") is None
+    conn.close()
 
 
 # --- Cloudflare Access sign-in --------------------------------------------------
@@ -209,6 +315,7 @@ def test_cloudflare_rejects(db_path, two_users, signer, make_token):
     assert resp.status_code == 401
     assert "Not signed in" in resp.text
     assert client.get("/static/style.css").status_code == 200  # static needs no identity
+    assert client.get("/healthz").text == "ok"  # nor does the kubelet's probe
 
 
 def test_loopback_acts_as_owner(db_path, two_users, signer):
