@@ -63,6 +63,27 @@ def rename_user(
     typer.echo(f"User {renamed.id} is now {renamed.display_name}")
 
 
+@app.command("import-collection")
+def import_collection(
+    path: Path = typer.Argument(..., help="Collection CSV (ManaBox, Moxfield, Archidekt, or name/quantity)"),
+    user: str = typer.Option("", "--user", help="Email or id of whose collection it is (default: user 1)"),
+    db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db", help="SQLite database path"),
+):
+    """Add every card in a collection export to a user's collection (one
+    card per copy, purchase price as cost basis). Each file imports once."""
+    from mtgtracker.importers import collection_csv
+
+    conn = _connect(db_path)
+    owner_id = _user_id(conn, user)
+    try:
+        summary = collection_csv.import_collection(
+            conn, path.read_bytes(), owner_id=owner_id, imported_by=users.OWNER_ID, filename=path.name
+        )
+    except collection_csv.CollectionImportError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(summary.message())
+
+
 @app.command("import-order")
 def import_order(
     path: Path = typer.Argument(..., help="Path to a .order file"),

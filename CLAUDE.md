@@ -15,6 +15,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # setup
 .venv/bin/pytest --cov=mtgtracker --cov-branch --cov-report=term-missing  # coverage
 .venv/bin/ruff check .                                       # lint (config in pyproject.toml)
 .venv/bin/mtg import-order path/to/Order.order               # CLI (typer app in mtgtracker/cli.py)
+.venv/bin/mtg import-collection FILE.csv [--user EMAIL|ID]    # ManaBox/Moxfield/Archidekt/name CSV -> lots
 .venv/bin/mtg list-decks
 .venv/bin/mtg reassemble-deck <deck-id>
 .venv/bin/mtg serve [--db PATH] [--port 8000] [--reload]      # web UI, binds 127.0.0.1 (MTG_AUTH=dev to try several users)
@@ -124,6 +125,15 @@ Each bucket carries a CSS `fill` (`_fill`), which templates use as inline `backg
 - **Acting for others:** `users.can_act_for` lets an admin act for someone who has never signed in. It's used by the coming loans phase.
 - **Admins:** an admin adds people at `/people`, but only in `dev`/`cloudflare` mode. In `single` mode every visitor is the admin, so the web can't touch the allowlist there; use `mtg add-user`.
 - **`can_edit` fails closed:** `render()` defaults it to False, and pages pass True only when the viewer owns what's shown. Gate every new owner-only control on it.
+
+**Collection import** (`importers/collection_csv.py`, migration 0007): a collection CSV becomes the target user's lots, one per copy, with no transaction.
+- **Formats:** columns are matched by header alias, so ManaBox, Moxfield, Archidekt, or any CSV with a Name column works. `parse()` is all or nothing and raises `CollectionImportError` naming the line.
+- **Money and metadata:** a USD purchase price becomes that copy's `allocated_cost_cents` through `parse_cents`. Other currencies, non-NM condition, non-English, and proxies go into `lots.notes`. `acquired_date` comes from the Added column, or today.
+- **Resolving:** by Scryfall ID, then set + number, then name, via `scryfall.fetch_collection`. That function answers exact identifiers (`id`, set + number) from the cache first, and only misses go to the network.
+  - Misses retry by name, then fuzzy for up to 10. Anything still unresolved becomes a lot with `scryfall_id` NULL for the printings queue.
+  - Resolved lots take Scryfall's name, set, and number.
+- **Writing:** everything resolves before anything is written, then one transaction writes the `collection_imports` row (UNIQUE `(owner_id, sha256)`, so a file imports once per collection) and the lots, each with `collection_import_id`.
+- **Web:** the upload is `POST /people/{id}/import` (multipart, at most `MAX_UPLOAD_BYTES`), allowed when `users.can_act_for`: yourself, or an admin for someone who has never signed in.
 
 **Commander:** `mtgtracker/commanders.py` lets any legendary creature on a Commander-format deck's list be its commander, checked against the cached type line. The deck page has the picker (`POST /decks/{id}/commander`). There is one commander per deck, with no partners. A middleware rejects POSTs whose `Origin` doesn't match `Host`, or that carry `Sec-Fetch-Site: cross-site`. Write routes use POST, then a 303 redirect, with the notice or error passed as a query param.
 

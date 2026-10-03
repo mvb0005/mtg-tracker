@@ -84,6 +84,8 @@ def _cache_single(card: dict) -> None:
 
 
 def _satisfies(card: dict, ident: dict) -> bool:
+    if "id" in ident:
+        return card["id"] == ident["id"]
     if "set" in ident:
         return card["set"] == ident["set"] and card["collector_number"] == ident["collector_number"]
     wanted = _normalize(ident["name"])
@@ -94,24 +96,43 @@ def _satisfies(card: dict, ident: dict) -> bool:
 def fetch_collection(identifiers: list[dict]) -> list[dict | None]:
     """Resolve many cards at once via POST /cards/collection (75 per
     request, a short pause between batches, per Scryfall's guidelines).
-    Each identifier is {"name": ...} or {"set": ..., "collector_number": ...}.
-    Returns one card (or None if not found) per identifier, in order, and
-    caches every card found like fetch_named_card does. An explicit user
-    action only (e.g. importing a list) -- never called on page load."""
-    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    Each identifier is {"id": <scryfall id>}, {"set": ..., "collector_number":
+    ...} or {"name": ...}. Exact identifiers (id, set + number) already in the
+    cache are answered from it; only the rest go to Scryfall. Returns one card
+    (or None if not found) per identifier, in order, and caches every card
+    found like fetch_named_card does. An explicit user action only (e.g.
+    importing a list) -- never called on page load."""
+    by_id: dict[str, dict] = {}
+    by_number: dict[tuple[str, str], dict] = {}
+    for card in cached_cards():
+        by_id[card["id"]] = card
+        by_number[(card["set"], card["collector_number"])] = card
     results: list[dict | None] = []
+    missing: list[int] = []
+    for i, ident in enumerate(identifiers):
+        if "id" in ident:
+            results.append(by_id.get(ident["id"]))
+        elif "set" in ident:
+            results.append(by_number.get((ident["set"], ident["collector_number"])))
+        else:
+            results.append(None)
+        if results[-1] is None:
+            missing.append(i)
+
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     with httpx.Client(timeout=30) as client:
-        for start in range(0, len(identifiers), 75):
+        for start in range(0, len(missing), 75):
             if start:
                 time.sleep(0.1)
-            batch = identifiers[start:start + 75]
+            batch = missing[start:start + 75]
             resp = client.post("https://api.scryfall.com/cards/collection",
-                               json={"identifiers": batch}, headers=headers)
+                               json={"identifiers": [identifiers[i] for i in batch]}, headers=headers)
             resp.raise_for_status()
             found = resp.json().get("data", [])
             for card in found:
                 _cache_single(card)
-            results.extend(next((c for c in found if _satisfies(c, ident)), None) for ident in batch)
+            for i in batch:
+                results[i] = next((c for c in found if _satisfies(c, identifiers[i])), None)
     return results
 
 

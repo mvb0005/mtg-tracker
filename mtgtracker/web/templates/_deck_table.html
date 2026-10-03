@@ -22,6 +22,6 @@
   </tbody>
 </table>
 {% else %}
-<p class="empty">No decks yet. Import an order with <code>mtg import-order</code>.</p>
+<p class="empty">{% if person is defined and person.id != user.id %}{{ person.display_name }} has no decks yet.{% else %}No decks yet. Import an order with <code>mtg import-order</code>.{% endif %}</p>
 {% endif %}
 </div>

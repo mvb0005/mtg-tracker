@@ -31,6 +31,7 @@ from markupsafe import Markup, escape
 
 from mtgtracker import cardinfo, commanders, db, deckmods, printings, scryfall, users
 from mtgtracker.cardinfo import BASIC_LAND_NAMES, SECTION_ORDER
+from mtgtracker.importers import collection_csv
 from mtgtracker.web import filters, queries
 from mtgtracker.web.auth import DEV_COOKIE, AccessVerifier, AuthConfig, NotSignedIn
 from mtgtracker.web.auth import resolve as resolve_user
@@ -121,6 +122,9 @@ templates.env.globals["type_labels"] = SECTION_ORDER
 templates.env.globals["type_options"] = {label: label for label in SECTION_ORDER}
 templates.env.globals["mana_values"] = filters.MANA_VALUES
 templates.env.globals["color_modes"] = filters.COLOR_MODES
+
+
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 
 
 def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_client=None) -> FastAPI:
@@ -407,12 +411,47 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
         return redirect("/people", notice=f"Added {person.display_name}.")
 
     @app.get("/people/{person_id}", response_class=HTMLResponse)
-    def person_page(person_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    def person_page(
+        person_id: int, request: Request, notice: str = "", error: str = "",
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
         person = load_person(conn, person_id)
+        can_import = users.can_act_for(me(request), person)
+        imports = conn.execute(
+            "SELECT original_filename, format, card_count, imported_at FROM collection_imports"
+            " WHERE owner_id = ? ORDER BY id DESC", (person.id,),
+        ).fetchall() if can_import else []
         return render(
             request, "person.html", person=person, decks=queries.list_decks(conn, person.id),
-            card_count=queries.count_cards(conn, person.id),
+            card_count=queries.count_cards(conn, person.id), can_import=can_import, imports=imports,
+            notice=notice, error=error,
         )
+
+    @app.post("/people/{person_id}/import")
+    async def person_import(person_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+        """Import a collection CSV into this person's collection: your own,
+        or (as an admin) for someone who hasn't signed in yet."""
+        person = load_person(conn, person_id)
+        actor = me(request)
+        if not users.can_act_for(actor, person):
+            raise HTTPException(status_code=403, detail="You can't import into that collection")
+        back = f"/people/{person.id}"
+        form = await request.form()
+        upload = form.get("file")
+        if upload is None or isinstance(upload, str) or not upload.filename:
+            return redirect(back, error="Choose a CSV file to import")
+        data = await upload.read(MAX_UPLOAD_BYTES + 1)
+        if len(data) > MAX_UPLOAD_BYTES:
+            return redirect(back, error="That file is too big (5 MB at most)")
+        try:
+            summary = collection_csv.import_collection(
+                conn, data, owner_id=person.id, imported_by=actor.id, filename=upload.filename[:200]
+            )
+        except collection_csv.CollectionImportError as exc:
+            return redirect(back, error=str(exc))
+        except httpx.HTTPError:
+            return redirect(back, error="Couldn't reach Scryfall; nothing was imported")
+        return redirect(back, notice=summary.message())
 
     @app.get("/people/{person_id}/cards", response_class=HTMLResponse)
     def person_cards(

@@ -4,7 +4,23 @@
 {% block content %}
 <p class="eyebrow"><a href="/people">Friends</a></p>
 <h1>{{ person.display_name }}{% if person.id == user.id %} <span class="subtle">(you)</span>{% endif %}</h1>
+{% include "_flash.html" %}
 <p class="deck-meta"><a href="/people/{{ person.id }}/cards">Browse {{ "your" if person.id == user.id else "their" }} cards</a> · {{ card_count }} card{{ "s" if card_count != 1 }}</p>
 <h2>Decks</h2>
 {% include "_deck_table.html" %}
+
+{% if can_import %}
+<h2>Import a collection</h2>
+<form class="import-form" method="post" action="/people/{{ person.id }}/import" enctype="multipart/form-data">
+  <p class="subtle">A CSV export from ManaBox, Moxfield or Archidekt, or any CSV with a Name column{% if person.id != user.id %}, added to {{ person.display_name }}'s collection{% endif %}. Every copy becomes a card; a purchase price becomes its cost basis, visible only to {{ "you" if person.id == user.id else "them" }}. Each file imports once.</p>
+  <label class="field">CSV file <input type="file" name="file" accept=".csv,text/csv" required></label>
+  <button type="submit" class="primary">Import cards</button>
+</form>
+{% if imports %}
+<h3>Imported</h3>
+<ul class="import-history">
+  {% for i in imports %}<li>{{ i.card_count }} cards from {{ i.original_filename or "a file" }} ({{ i.format }}) · {{ i.imported_at[:10] }}</li>{% endfor %}
+</ul>
+{% endif %}
+{% endif %}
 {% endblock %}
