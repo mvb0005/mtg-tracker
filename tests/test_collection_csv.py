@@ -291,3 +291,33 @@ def test_upload_errors_come_back_as_messages(db_path, cache_dir, monkeypatch):
     monkeypatch.setattr("mtgtracker.web.app.MAX_UPLOAD_BYTES", 10)
     assert "too+big" in _upload(me, 1).headers["location"]
     assert collection_csv.MAX_ROWS > 0
+
+
+def test_cached_cards_rechecks_cheaply_but_sees_new_and_rewritten_files(cache_dir, monkeypatch):
+    """A page does hundreds of lookups: between full checks only the two
+    cache directories are statted. New files show up at once; a file
+    rewritten in place shows up after FULL_CHECK_SECONDS (or at once when
+    this process wrote it)."""
+    import os
+    from pathlib import Path
+
+    first = scryfall.cached_cards()
+    globs = []
+    real_glob = Path.glob
+    monkeypatch.setattr(Path, "glob", lambda self, pattern: globs.append(pattern) or real_glob(self, pattern))
+    for _ in range(50):
+        assert scryfall.cached_cards() is first
+    assert globs == []  # no per-file scan between full checks
+
+    card = dict(_fdc("58"), id="11111111-1111-1111-1111-111111111111")
+    (cache_dir / "cards").mkdir(exist_ok=True)
+    (cache_dir / "cards" / f"{card['id']}.json").write_text(json.dumps(card))
+    assert card["id"] in {c["id"] for c in scryfall.cached_cards()}  # new file: seen at once
+
+    # Rewritten in place by another process: seen at the next full check.
+    path = cache_dir / "cards" / f"{card['id']}.json"
+    path.write_text(json.dumps(dict(card, name="Renamed Valkyrie")))
+    stamp = path.stat().st_mtime_ns + 1_000_000_000  # writes inside one fs tick share an mtime
+    os.utime(path, ns=(stamp, stamp))
+    monkeypatch.setattr(scryfall, "FULL_CHECK_SECONDS", 0.0)
+    assert "Renamed Valkyrie" in {c["name"] for c in scryfall.cached_cards()}

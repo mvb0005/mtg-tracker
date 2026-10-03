@@ -49,6 +49,7 @@ def fetch_set_cards(set_code: str, *, use_cache: bool = True) -> list[dict]:
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(json.dumps(cards))
+    invalidate_cache()
     return cards
 
 
@@ -81,6 +82,7 @@ def _cache_single(card: dict) -> None:
     cards_dir = CACHE_DIR / "cards"
     cards_dir.mkdir(parents=True, exist_ok=True)
     (cards_dir / f"{card['id']}.json").write_text(json.dumps(card))
+    invalidate_cache()
 
 
 def _satisfies(card: dict, ident: dict) -> bool:
@@ -138,12 +140,39 @@ def fetch_collection(identifiers: list[dict]) -> list[dict | None]:
 
 _cached_cards: dict[str, object] = {}
 
+# How often cached_cards() re-checks every cache file's mtime. In between it
+# only stats the two cache directories, whose mtimes change whenever a file
+# is added or removed. A page does hundreds of card lookups, and statting
+# every one of hundreds of cached cards per lookup made pages take seconds.
+FULL_CHECK_SECONDS = 5.0
+
+
+def _dir_mtime(path: Path) -> int | None:
+    try:
+        return path.stat().st_mtime_ns
+    except FileNotFoundError:
+        return None
+
+
+def invalidate_cache() -> None:
+    """Make the next cached_cards() call re-check every file (called after
+    this process writes to the cache)."""
+    _cached_cards.pop("checked_at", None)
+
 
 def cached_cards() -> list[dict]:
     """Every card already cached, never hitting the network: each set in
     CACHE_DIR/*.json plus single cards in CACHE_DIR/cards/*.json (from
     fetch_named_card). Parsed once and reused until a cache file is added or
-    changes."""
+    changes: added/removed files are seen at once (directory mtimes), a file
+    rewritten in place by another process within FULL_CHECK_SECONDS."""
+    cheap = (str(CACHE_DIR), _dir_mtime(CACHE_DIR), _dir_mtime(CACHE_DIR / "cards"))
+    now = time.monotonic()
+    if (
+        "cards" in _cached_cards and _cached_cards.get("cheap") == cheap
+        and now - _cached_cards.get("checked_at", -FULL_CHECK_SECONDS) < FULL_CHECK_SECONDS  # type: ignore[operator]
+    ):
+        return _cached_cards["cards"]  # type: ignore[return-value]
     set_files = sorted(CACHE_DIR.glob("*.json"))
     card_files = sorted((CACHE_DIR / "cards").glob("*.json"))
     key = tuple((str(p), p.stat().st_mtime_ns) for p in (*set_files, *card_files))
@@ -152,6 +181,8 @@ def cached_cards() -> list[dict]:
         cards += [json.loads(p.read_text()) for p in card_files]
         _cached_cards["cards"] = cards
         _cached_cards["key"] = key
+    _cached_cards["cheap"] = cheap
+    _cached_cards["checked_at"] = now
     return _cached_cards["cards"]  # type: ignore[return-value]
 
 
