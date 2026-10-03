@@ -1001,3 +1001,9 @@ body[data-identity] .deck-section-head { border-bottom: 0; padding-bottom: 6px; 
 .whoami { margin-left: 8px; padding-left: 14px; border-left: 1px solid var(--border); color: var(--text); font-weight: 600; font-size: 0.9rem; }
 .import-history { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 0.9rem; }
 .field input[type="file"] { padding: 6px 0; border: 0; background: none; }
+/* A card you don't own that a friend does: borrowable rather than to buy. */
+.tile-flag.borrow { background: var(--accent); color: var(--bg); border: 1px solid var(--accent); }
+.tile.wanted.borrowable .tile-art img, .tile.wanted.borrowable .tile-placeholder { opacity: 0.62; filter: saturate(0.8); }
+.tag.borrow { color: var(--accent); border-color: var(--accent); }
+.deck-row.borrowable .deck-row-name { font-style: normal; }
+.borrow-note { margin: 4px 0 0; font-size: 0.8rem; color: var(--accent); font-weight: 600; text-align: center; }

@@ -67,6 +67,20 @@
     return list;
   };
 
+  // Friends who own this card: "Alex · 3 (3 in no deck)", each linking to
+  // that card in their collection.
+  const friendList = (friends, cardName) => {
+    const list = el("ul", "card-panel-decks");
+    for (const friend of friends) {
+      const item = el("li");
+      const link = el("a", null, friend.name);
+      link.href = `/people/${encodeURIComponent(friend.id)}/cards?q=${encodeURIComponent(cardName.split(" // ")[0])}`;
+      item.append(el("span", "card-panel-deck-count", `${friend.qty}×`), link);
+      if (friend.where) item.append(el("span", "subtle", ` ${friend.where}`));
+      list.append(item);
+    }
+    return list;
+  };
   const render = (card) => {
     const body = el("div", "card-panel-body");
 
@@ -116,6 +130,9 @@
         : row("Where", card.where),
       // Held somewhere that isn't one of its lists, or sold: say so too.
       card.decks && card.decks.length && !card.decks.some((d) => d.current) ? row("Now", card.where) : null,
+      card.friends && card.friends.length
+        ? row(card.wanted ? "Borrow from" : "Friends have", friendList(card.friends, card.name || ""))
+        : null,
       row("Cost basis", card.cost),
       row("Rarity", card.rarity && card.rarity[0].toUpperCase() + card.rarity.slice(1)),
       row("Artist", card.artist),

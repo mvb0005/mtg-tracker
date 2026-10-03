@@ -126,6 +126,15 @@ Each bucket carries a CSS `fill` (`_fill`), which templates use as inline `backg
 - **Admins:** an admin adds people at `/people`, but only in `dev`/`cloudflare` mode. In `single` mode every visitor is the admin, so the web can't touch the allowlist there; use `mtg add-user`.
 - **`can_edit` fails closed:** `render()` defaults it to False, and pages pass True only when the viewer owns what's shown. Gate every new owner-only control on it.
 
+**Friends' copies (borrowable):** `queries.FriendCopies(conn, exclude)` indexes every non-disposed lot owned by someone not in `exclude`. It's keyed by normalized name and front face (`_name_keys`), so "Delver of Secrets" matches a "Delver of Secrets // Insectile Aberration" lot. Calling it with a card name returns `[{id, name, qty, where}]` per friend.
+- **Who's excluded:** `get_deck` excludes the deck owner and the viewer. The Modify page excludes you.
+- **Display:** groups get `friends`.
+  - A wanted card a friend owns becomes `.borrowable`, flagged "From Alex" (or "From N friends"), with the tooltip `borrow_summary()` ("Owned by 1 friend: Alex (1)").
+  - The panel gets a "Borrow from" row linking to the card in their collection; owned cards say "Friends have" instead.
+  - Reassemble splits wants into per-friend "Borrow from friends" checklists and "Nobody has these".
+  - The ledger shows "Friends have".
+- **Display only:** there are no loans yet, so nothing moves.
+
 **Collection import** (`importers/collection_csv.py`, migration 0007): a collection CSV becomes the target user's lots, one per copy, with no transaction.
 - **Formats:** columns are matched by header alias, so ManaBox, Moxfield, Archidekt, or any CSV with a Name column works. `parse()` is all or nothing and raises `CollectionImportError` naming the line.
 - **Money and metadata:** a USD purchase price becomes that copy's `allocated_cost_cents` through `parse_cents`. Other currencies, non-NM condition, non-English, and proxies go into `lots.notes`. `acquired_date` comes from the Added column, or today.

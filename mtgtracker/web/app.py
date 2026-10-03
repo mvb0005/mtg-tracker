@@ -103,6 +103,7 @@ def identity_pips(identity) -> Markup:
 
 
 templates.env.globals["theme_attrs"] = theme_attrs
+templates.env.globals["borrow_summary"] = queries.borrow_summary
 templates.env.globals["identity_pips"] = identity_pips
 
 
@@ -517,6 +518,10 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
             )
 
         identity = queries.deck_identities(conn).get(deck_id, ())
+        friend_copies = queries.FriendCopies(conn, {user.id})
+        for change in pending:
+            if not change["ready"]:
+                change["insert_row"]["friends"] = friend_copies(change["add_card_name"])
         # Cards the deck lists but you don't own, each replaceable by one you do.
         wanted = []
         for group in deckmods.wanted_groups(conn, deck_id):
@@ -526,6 +531,7 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
                 "set_code": None, "collector_number": None, "cost_cents": None, "decks": [],
                 "disposition_type": None, "category": art.category(group["card_name"]),
                 "wanted": True, "where": "Not owned yet: need to acquire", "printing": "Not owned yet",
+                "friends": friend_copies(group["card_name"]),
             }
             wanted.append({**group, "row": row})
         owned_rows = []

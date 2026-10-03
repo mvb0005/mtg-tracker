@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from collections import Counter
 
-from mtgtracker import cardinfo
+from mtgtracker import cardinfo, scryfall
 from mtgtracker.decks import reassemble
 from mtgtracker.printings import BASIC_LAND_NAMES
 from mtgtracker.web.breakdown import deck_breakdown
@@ -186,6 +186,11 @@ def get_deck(
         " GROUP BY card_name, scryfall_id",
         (deck_id,),
     ))
+    # Who else owns each card (never the deck's owner or the viewer).
+    friend_copies = FriendCopies(conn, {deck["owner_id"], viewer_id} - {None})
+    for g in owned + wanted:
+        g["friends"] = friend_copies(g["card_name"])
+    borrow_from, acquire = _borrow_lists(wanted)
     # Commander first, then the chosen sort (highest mana value by default);
     # both views split into type sections.
     commander = deck["commander"]
@@ -228,9 +233,99 @@ def get_deck(
         "list_cost_cents": list_cost,
         "missing": reassemble(conn, deck_id),
         "pull_from": _pull_groups(reassemble(conn, deck_id), conn),
-        "acquire": sorted(((g["card_name"], g["qty"]) for g in wanted), key=lambda item: item[0].casefold()),
+        "acquire": acquire,
+        "borrow_from": borrow_from,
+        "borrowable_count": sum(min(g["qty"], sum(f["qty"] for f in g["friends"])) for g in wanted),
         "deck_names": {row["id"]: row["name"] for row in conn.execute("SELECT id, name FROM decks")},
     }
+
+
+def _name_keys(card_name: str) -> set[str]:
+    """A card's normalized name and its front face's ("A // B" -> "a b", "a"),
+    so a double-faced card matches however a list or a lot spells it."""
+    return {scryfall._normalize(card_name), scryfall._normalize(card_name.split("//")[0])}
+
+
+class FriendCopies:
+    """Copies of each card that other people own (not disposed of), for
+    showing what you could borrow and from whom. Friends see each other's
+    collections, so this reveals nothing new; it never includes cost."""
+
+    def __init__(self, conn: sqlite3.Connection, exclude: set[int]):
+        self._by_key: dict[str, dict[tuple[int, str], dict]] = {}
+        placeholders = ",".join("?" * len(exclude)) or "NULL"
+        for row in conn.execute(
+            f"""
+            SELECT lots.card_name, users.id AS user_id, users.display_name,
+                   current_deck.name AS deck_name, COUNT(*) AS qty
+            FROM lots
+            JOIN users ON users.id = lots.owner_id
+            LEFT JOIN dispositions ON dispositions.lot_id = lots.id
+            LEFT JOIN deck_cards AS current ON current.lot_id = lots.id AND current.equipped = 1
+            LEFT JOIN decks AS current_deck ON current_deck.id = current.deck_id
+            WHERE dispositions.id IS NULL AND lots.owner_id NOT IN ({placeholders})
+            GROUP BY lots.card_name, users.id, current.deck_id
+            """,
+            tuple(exclude),
+        ):
+            for key in _name_keys(row["card_name"]):
+                entry = self._by_key.setdefault(key, {}).setdefault(
+                    (row["user_id"], row["card_name"]),
+                    {"user_id": row["user_id"], "name": row["display_name"], "loose": 0, "decks": Counter()},
+                )
+                if row["deck_name"] is None:
+                    entry["loose"] += row["qty"]
+                else:
+                    entry["decks"][row["deck_name"]] += row["qty"]
+
+    def __call__(self, card_name: str) -> list[dict]:
+        """[{id, name, qty, where}] per friend who owns card_name, most copies
+        first. `where` says where their copies are ("in no deck", or in their
+        decks)."""
+        merged: dict[tuple[int, str], dict] = {}
+        for key in _name_keys(card_name):
+            merged.update(self._by_key.get(key, {}))
+        friends: dict[int, dict] = {}
+        for entry in merged.values():
+            friend = friends.setdefault(
+                entry["user_id"], {"loose": 0, "decks": Counter(), "name": entry["name"]}
+            )
+            friend["loose"] += entry["loose"]
+            friend["decks"].update(entry["decks"])
+        result = []
+        for user_id, f in friends.items():
+            places = ([f"{f['loose']} in no deck"] if f["loose"] else []) + [
+                f"{n} in {deck}" for deck, n in sorted(f["decks"].items())
+            ]
+            qty = f["loose"] + sum(f["decks"].values())
+            result.append({"id": user_id, "name": f["name"], "qty": qty, "where": ", ".join(places)})
+        return sorted(result, key=lambda f: (-f["qty"], f["name"].casefold()))
+
+
+def borrow_summary(friends: list[dict]) -> str:
+    """Tooltip text: "Owned by 1 friend: Alex (3)"."""
+    if not friends:
+        return ""
+    names = ", ".join(f"{f['name']} ({f['qty']})" for f in friends)
+    return f"Owned by {len(friends)} friend{'s' if len(friends) != 1 else ''}: {names}"
+
+
+def _borrow_lists(wanted: list[dict]) -> tuple[list[dict], list[tuple[str, int]]]:
+    """Reassemble's to-acquire cards split into per-friend borrow checklists
+    (a card several friends own is listed under each) and what nobody has."""
+    by_friend: dict[int, dict] = {}
+    nobody: list[tuple[str, int]] = []
+    for g in wanted:
+        if not g["friends"]:
+            nobody.append((g["card_name"], g["qty"]))
+        for f in g["friends"]:
+            entry = by_friend.setdefault(f["id"], {"id": f["id"], "name": f["name"], "cards": []})
+            entry["cards"].append((g["card_name"], min(g["qty"], f["qty"])))
+    for entry in by_friend.values():
+        entry["cards"].sort(key=lambda item: item[0].casefold())
+        entry["total"] = sum(n for _, n in entry["cards"])
+    return (sorted(by_friend.values(), key=lambda e: (-e["total"], e["name"].casefold())),
+            sorted(nobody, key=lambda item: item[0].casefold()))
 
 
 def _wanted_rows(rows) -> list[dict]:

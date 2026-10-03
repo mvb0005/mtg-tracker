@@ -23,12 +23,13 @@
   <div><dt>Equipped here</dt><dd>{{ equipped_count }}</dd></div>
   {% if elsewhere_count %}<div><dt>In other decks</dt><dd>{{ elsewhere_count }}</dd></div>{% endif %}
   {% if wanted_count %}<div><dt>To acquire</dt><dd>{{ wanted_count }}</dd></div>{% endif %}
+  {% if borrowable_count %}<div><dt>Friends have</dt><dd>{{ borrowable_count }}</dd></div>{% endif %}
   {% if list_cost_cents is not none %}<div><dt>Cost basis</dt><dd>{{ list_cost_cents | money }}</dd></div>{% endif %}
 </dl>
 {% if list_cost_cents is not none %}<p class="footnote">Cost basis sums the owned cards on this list, including ones lent to other decks, so a card on two lists counts toward both. Cards still to acquire aren't counted.</p>{% endif %}
 
 <h2>Reassemble</h2>
-{% if not pull_from and not acquire %}
+{% if not pull_from and not acquire and not borrow_from %}
 <p><span class="tag ok">assembled</span> Every card on the list is in the deck.</p>
 {% else %}
 <div class="reassemble">
@@ -43,9 +44,21 @@
     {% endfor %}
   </section>
   {% endif %}
+  {% if borrow_from %}
+  <section>
+    <h3>Borrow from friends <span class="subtle">({{ borrowable_count }})</span></h3>
+    {% for f in borrow_from %}
+    <div class="checklist">
+      <div class="checklist-head"><a href="/people/{{ f.id }}/cards">{{ f.name }}</a> <span class="subtle">· {{ f.total }}</span></div>
+      <ul>{% for name, n in f.cards %}<li><span class="checklist-qty">{{ n }}</span> {{ name }}</li>{% endfor %}</ul>
+    </div>
+    {% endfor %}
+    {% if borrow_from | length > 1 %}<p class="footnote">A card more than one friend has is listed under each.</p>{% endif %}
+  </section>
+  {% endif %}
   {% if acquire %}
   <section>
-    <h3>Need to acquire <span class="subtle">({{ wanted_count }})</span></h3>
+    <h3>{{ "Nobody has these" if borrow_from else "Need to acquire" }} <span class="subtle">({{ acquire | sum(attribute=1) }})</span></h3>
     <div class="checklist">
       <ul>{% for name, n in acquire %}<li><span class="checklist-qty">{{ n }}</span> {{ name }}</li>{% endfor %}</ul>
     </div>

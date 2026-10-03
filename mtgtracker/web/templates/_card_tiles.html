@@ -24,6 +24,7 @@
   "where": where,
   "decks": c.decks if c.decks is defined else [],
   "cost": c.cost_cents | money,
+  "friends": c.friends if c.friends is defined else [],
 } | tojson }}
 {%- endmacro %}
 
@@ -51,7 +52,8 @@
 {#- Three states on a deck page: here (normal), in another deck (.away,
     greyed) and not owned (.wanted: dashed outline, faded, "To acquire"). -#}
 {%- set away = (not c.equipped and not c.wanted) if mode == "deck" else c.disposition_type -%}
-<figure class="tile{% if c.finish in ('foil', 'etched') %} foil{% endif %}{% if away %} away{% endif %}{% if c.wanted %} wanted{% endif %}" data-card='{{ panel_json(c, mode) }}' tabindex="0">
+{%- set friends = c.friends if c.friends is defined else [] -%}
+<figure class="tile{% if c.finish in ('foil', 'etched') %} foil{% endif %}{% if away %} away{% endif %}{% if c.wanted %} wanted{% endif %}{% if c.wanted and friends %} borrowable{% endif %}" data-card='{{ panel_json(c, mode) }}' tabindex="0"{% if friends %} title="{{ borrow_summary(friends) }}"{% endif %}>
   <div class="tile-art">
     {% if c.art.image %}
       <img src="{{ c.art.image }}" alt="{{ c.card_name }}" loading="lazy" referrerpolicy="no-referrer">
@@ -60,13 +62,15 @@
     {% endif %}
     {% if c.qty > 1 %}<span class="tile-qty">{{ c.qty }}×</span>{% endif %}
     {% if c.finish in ("foil", "etched") %}<span class="tile-finish">{{ c.finish }}</span>{% endif %}
-    {% if c.wanted %}
+    {% if c.wanted and friends %}
+      <span class="tile-flag borrow">From {{ friends[0].name if friends | length == 1 else (friends | length) ~ " friends" }}</span>
+    {% elif c.wanted %}
       <span class="tile-flag acquire">To acquire</span>
     {% elif can_edit and c.mine is not false and not c.set_code and c.card_name not in basic_names %}
       <a class="tile-flag" href="/printings/{{ c.lot_id }}">needs printing</a>
     {% endif %}
   </div>
-  <figcaption class="visually-hidden">{{ c.card_name }}{% if c.wanted %} (to acquire){% elif away %} (not here){% endif %}</figcaption>
+  <figcaption class="visually-hidden">{{ c.card_name }}{% if c.wanted %} (to acquire{% if friends %}; {{ borrow_summary(friends) }}{% endif %}){% elif away %} (not here){% endif %}</figcaption>
 </figure>
 {% endmacro %}
 
@@ -84,10 +88,12 @@
     <ul class="deck-rows">
       {% for c in rows %}
       {%- set away = (not c.equipped and not c.wanted) if mode == "deck" else c.disposition_type -%}
-      <li class="deck-row{% if away %} away{% endif %}{% if c.wanted %} wanted{% endif %}" data-card='{{ panel_json(c, mode) }}' tabindex="0">
+      {%- set friends = c.friends if c.friends is defined else [] -%}
+      <li class="deck-row{% if away %} away{% endif %}{% if c.wanted %} wanted{% endif %}{% if c.wanted and friends %} borrowable{% endif %}" data-card='{{ panel_json(c, mode) }}' tabindex="0"{% if friends %} title="{{ borrow_summary(friends) }}"{% endif %}>
         <span class="deck-row-qty">{{ c.qty }}</span>
         <span class="deck-row-name">{{ c.card_name }}
-          {%- if c.wanted %} <span class="tag acquire">to acquire</span>
+          {%- if c.wanted and friends %} <span class="tag borrow">from {{ friends[0].name if friends | length == 1 else (friends | length) ~ " friends" }}</span>
+          {%- elif c.wanted %} <span class="tag acquire">to acquire</span>
           {%- elif can_edit and c.mine is not false and not c.set_code and c.card_name not in basic_names %} <a class="tag warn" href="/printings/{{ c.lot_id }}">needs printing</a>{% endif %}
           {%- if away %}<span class="visually-hidden"> (not here)</span>{% endif %}</span>
         <span class="deck-row-cost">{{ c.art.faces[0].mana_cost | mana_symbols if c.art.faces }}</span>
