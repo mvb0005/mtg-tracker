@@ -366,7 +366,9 @@ def collapse_by_name(rows: list[dict]) -> list[dict]:
         merged.append({
             **base,
             "qty": sum(c["qty"] for c in copies),
-            "cost_cents": sum(c["cost_cents"] or 0 for c in copies),
+            # None when no copy has a cost you may see (someone else's cards).
+            "cost_cents": None if all(c["cost_cents"] is None for c in copies)
+            else sum(c["cost_cents"] or 0 for c in copies),
             "lot_id": min(c["lot_id"] for c in (unresolved or copies)),
             # A single shared printing keeps set/number; mixed or unpicked -> None.
             "set_code": base["set_code"] if len(printings) == 1 and not unresolved else None,

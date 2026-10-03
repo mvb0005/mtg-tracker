@@ -251,6 +251,7 @@ def test_admin_imports_for_a_friend_who_has_not_signed_in(db_path, cache_dir):
     friend_view = me.get(f"/people/{friend.id}/cards", params={"view": "list"}).text
     assert "Youthful Valkyrie" in friend_view
     assert "$1.10" not in friend_view
+    assert '"cost": "$' not in friend_view  # hidden, not shown as $0.00
 
     again = _upload(me, friend.id)
     assert "already+imported" in again.headers["location"]
