@@ -8,9 +8,10 @@ Each copy becomes one lot (one lot = one physical card) owned by the
 target user, with no transaction: a collection import isn't a purchase.
 When the file has a purchase price, that copy's cost basis is that price
 (private to its owner, like all money). Cards are resolved on Scryfall by
-the most exact thing the file gives -- Scryfall ID, then set + collector
-number, then name -- and a card that can't be resolved still gets a lot,
-honestly unpinned (scryfall_id NULL), for the printings queue.
+the most exact thing the file gives: a Scryfall ID or set + collector
+number pins the printing. A card matched only by name -- or not found at
+all -- still gets a lot, honestly unpinned (scryfall_id NULL), for the
+printings queue: resolution never guesses a printing.
 
 A file is imported once per user (by sha256); importing it again is an
 error rather than a duplicate collection.
@@ -31,6 +32,7 @@ from mtgtracker.money import parse_cents
 
 MAX_ROWS = 20_000
 MAX_COPIES_PER_ROW = 1_000
+MAX_COPIES = 20_000  # per import
 
 # Header aliases, lowercased. First match wins.
 COLUMNS = {
@@ -87,16 +89,18 @@ class ImportSummary:
     distinct: int
     priced: int
     cost_cents: int
-    unresolved: list[str] = field(default_factory=list)
+    unresolved: list[str] = field(default_factory=list)  # not found on Scryfall at all
+    unpinned: int = 0  # copies (found or not) still needing their printing picked
 
     def message(self) -> str:
         parts = [f"Imported {self.copies} card{'s' if self.copies != 1 else ''}"
                  f" ({self.distinct} distinct) from a {self.format} export."]
         if self.unresolved:
             shown = ", ".join(self.unresolved[:5]) + ("…" if len(self.unresolved) > 5 else "")
-            parts.append(
-                f"{len(self.unresolved)} couldn't be matched on Scryfall and need a printing: {shown}."
-            )
+            parts.append(f"{len(self.unresolved)} couldn't be found on Scryfall: {shown}.")
+        if self.unpinned:
+            parts.append(f"{self.unpinned} need{'s' if self.unpinned == 1 else ''} a printing picked"
+                         " (the file didn't say which).")
         return " ".join(parts)
 
 
@@ -206,25 +210,42 @@ def _identifier(row: Row) -> dict:
     return {"name": row.name}
 
 
-def _resolve(rows: list[Row]) -> list[dict | None]:
-    """Scryfall card (or None) per row: one batched, cache-first lookup by
-    each row's most exact identifier, then a by-name lookup for misses that
-    had an id or set + number (a stale id or an odd collector number), and
-    finally a fuzzy retry for up to 10 remaining misses."""
-    cards = scryfall.fetch_collection([_identifier(r) for r in rows])
-    retry = [i for i, (r, c) in enumerate(zip(rows, cards, strict=True))
-             if c is None and _identifier(r).keys() != {"name"}]
-    if retry:
-        for i, card in zip(retry, scryfall.fetch_collection([{"name": rows[i].name} for i in retry]),
-                           strict=True):
-            cards[i] = card
+@dataclass(frozen=True)
+class Match:
+    card: dict
+    exact: bool  # matched by Scryfall ID or set + number: this printing, not a guess
+
+
+def _resolve(rows: list[Row]) -> list[Match | None]:
+    """Scryfall match (or None) per row. Exact identifiers first, one
+    batched cache-first lookup by Scryfall ID or set + number; a stale ID
+    then tries its set + number. Rows with only a name, or whose exact
+    identifiers missed, are matched by name (then fuzzy, for up to 10) --
+    which names the card but not the printing, so those stay unpinned."""
+    matches: list[Match | None] = [None] * len(rows)
+    exact = [i for i, r in enumerate(rows) if r.scryfall_id or (r.set_code and r.collector_number)]
+    for i, card in zip(exact, scryfall.fetch_collection([_identifier(rows[i]) for i in exact]), strict=True):
+        if card is not None:
+            matches[i] = Match(card, exact=True)
+    stale = [i for i in exact if matches[i] is None and rows[i].scryfall_id
+             and rows[i].set_code and rows[i].collector_number]
+    by_number = [{"set": rows[i].set_code, "collector_number": rows[i].collector_number} for i in stale]
+    for i, card in zip(stale, scryfall.fetch_collection(by_number), strict=True):
+        if card is not None:
+            matches[i] = Match(card, exact=True)
+
+    by_name = [i for i in range(len(rows)) if matches[i] is None]
+    for i, card in zip(by_name, scryfall.fetch_collection([{"name": rows[i].name} for i in by_name]),
+                       strict=True):
+        if card is not None:
+            matches[i] = Match(card, exact=False)
     misses = 0
     for i, row in enumerate(rows):
-        if cards[i] is None and misses < 10:
+        if matches[i] is None and misses < 10:
             misses += 1
             with contextlib.suppress(scryfall.CardLookupError):
-                cards[i] = scryfall.fetch_named_card(row.name)
-    return cards
+                matches[i] = Match(scryfall.fetch_named_card(row.name), exact=False)
+    return matches
 
 
 def import_collection(
@@ -244,15 +265,21 @@ def import_collection(
     except UnicodeDecodeError:
         raise CollectionImportError("the file isn't UTF-8 text -- export it as CSV") from None
     parsed = parse(text)
-    cards = _resolve(parsed.rows)
+    total = sum(row.qty for row in parsed.rows)
+    if total > MAX_COPIES:
+        raise CollectionImportError(f"{total} cards is more than {MAX_COPIES} in one import; split the file")
+    matches = _resolve(parsed.rows)
 
     lots = []
     unresolved: list[str] = []
-    for row, card in zip(parsed.rows, cards, strict=True):
-        if card is None:
+    for row, match in zip(parsed.rows, matches, strict=True):
+        if match is None:
             unresolved.append(row.name)
             values = (None, row.name, None, None)
+        elif not match.exact:  # the card, but not which printing: never guess one
+            values = (None, match.card["name"], None, None)
         else:
+            card = match.card
             values = (card["id"], card["name"], card["set"], card["collector_number"])
         lot = (owner_id, *values, row.finish, row.price_cents, row.acquired_date, row.notes)
         lots.extend([lot] * row.qty)
@@ -275,5 +302,5 @@ def import_collection(
     return ImportSummary(
         import_id=import_id, format=parsed.format, copies=len(lots),
         distinct=len({lot[2] for lot in lots}), priced=len(priced), cost_cents=sum(priced),
-        unresolved=sorted(set(unresolved)),
+        unresolved=sorted(set(unresolved)), unpinned=sum(lot[1] is None for lot in lots),
     )

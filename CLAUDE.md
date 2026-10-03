@@ -105,7 +105,7 @@ Each bucket carries a CSS `fill` (`_fill`), which templates use as inline `backg
   - `wanted_groups` lists the deck's wants, holding back copies already being replaced.
   - `owned_fitting` lists insertable owned cards whose color identity fits the deck's colors. Colorless fits, and uncached cards are offered too.
   - On the Modify page, the "Cards you don't own" section shares one `#own-picker`, rendered once and moved by `deck-modify.js`, which puts the clicked card's type section first. The `#cut-picker` also offers wanted cards via `cut_want_id`.
-- **Known gap:** only precon seeding creates lots today, so there's no purchase flow yet to turn a wanted card into an owned one.
+- **Known gap:** lots come only from precon seeding and collection imports, so there's no purchase flow yet to turn a wanted card into an owned one.
 
 **Card size:** the grid's `--tile-min` (190px) is the smallest readable card width. The grid drops a column rather than shrinking cards: 5 across when the results area is 1008px, 4 at 1600px with the panel showing. Phones use 140px for 2 columns.
 
@@ -129,11 +129,13 @@ Each bucket carries a CSS `fill` (`_fill`), which templates use as inline `backg
 **Collection import** (`importers/collection_csv.py`, migration 0007): a collection CSV becomes the target user's lots, one per copy, with no transaction.
 - **Formats:** columns are matched by header alias, so ManaBox, Moxfield, Archidekt, or any CSV with a Name column works. `parse()` is all or nothing and raises `CollectionImportError` naming the line.
 - **Money and metadata:** a USD purchase price becomes that copy's `allocated_cost_cents` through `parse_cents`. Other currencies, non-NM condition, non-English, and proxies go into `lots.notes`. `acquired_date` comes from the Added column, or today.
-- **Resolving:** by Scryfall ID, then set + number, then name, via `scryfall.fetch_collection`. That function answers exact identifiers (`id`, set + number) from the cache first, and only misses go to the network.
-  - Misses retry by name, then fuzzy for up to 10. Anything still unresolved becomes a lot with `scryfall_id` NULL for the printings queue.
-  - Resolved lots take Scryfall's name, set, and number.
+- **Resolving** goes through `scryfall.fetch_collection`, which answers exact identifiers (`id`, set + number) from the cache first; only misses go to the network.
+  - **Only a Scryfall ID or set + number pins a printing.** A stale ID retries its set + number.
+  - A name or fuzzy match (up to 10) sets the canonical name but leaves `scryfall_id`/`set_code`/`collector_number` NULL. So does not being found at all. Either way the lot goes to the printings queue. Never guess a printing here either.
+  - The summary reports not-found names and the unpinned count. One import is capped at `MAX_COPIES`.
 - **Writing:** everything resolves before anything is written, then one transaction writes the `collection_imports` row (UNIQUE `(owner_id, sha256)`, so a file imports once per collection) and the lots, each with `collection_import_id`.
-- **Web:** the upload is `POST /people/{id}/import` (multipart, at most `MAX_UPLOAD_BYTES`), allowed when `users.can_act_for`: yourself, or an admin for someone who has never signed in.
+- **Web:** the upload is `POST /people/{id}/import` (multipart, at most `MAX_UPLOAD_BYTES`, also checked against Content-Length before parsing). It's allowed by `may_act_for`: always into your own collection, and for others only via `users.can_act_for` in `dev`/`cloudflare` mode. Use `may_act_for` for every future act-for-a-friend route.
+- **Duplicates:** the sha256 check only stops the identical file. A re-export with one more card would import everything again. There's no merge or undo yet, but `collection_import_id` makes undo easy to add.
 
 **Commander:** `mtgtracker/commanders.py` lets any legendary creature on a Commander-format deck's list be its commander, checked against the cached type line. The deck page has the picker (`POST /decks/{id}/commander`). There is one commander per deck, with no partners. A middleware rejects POSTs whose `Origin` doesn't match `Host`, or that carry `Sec-Fetch-Site: cross-site`. Write routes use POST, then a 303 redirect, with the notice or error passed as a query param.
 

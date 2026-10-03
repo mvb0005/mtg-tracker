@@ -4,7 +4,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from mtgtracker import db, scryfall, users
+from mtgtracker import db, printings, scryfall, users
 from mtgtracker.importers import collection_csv
 from mtgtracker.importers.collection_csv import CollectionImportError, import_collection, parse
 from mtgtracker.web.app import create_app
@@ -126,10 +126,11 @@ def test_import_creates_one_lot_per_copy_from_the_cache(db_path, cache_dir):
     conn.close()
 
 
-def test_import_resolves_misses_by_name_and_keeps_unresolved_cards(db_path, cache_dir, monkeypatch):
-    """A row with only a name goes to /cards/collection; a stale Scryfall ID
-    falls back to its name; a card Scryfall can't find still becomes an
-    (unpinned) lot for the printings queue."""
+def test_import_never_guesses_a_printing(db_path, cache_dir, monkeypatch):
+    """Only a Scryfall ID or set + number pins a printing. A stale ID falls
+    back to its set + number; a name-only match (or a stale ID with nothing
+    else) names the card but stays unpinned; a card Scryfall can't find
+    still becomes an unpinned lot. All of them land in the printings queue."""
     sol_ring = _fdc("286")
     requests = []
 
@@ -142,25 +143,48 @@ def test_import_resolves_misses_by_name_and_keeps_unresolved_cards(db_path, cach
         return httpx.Response(404, json={"object": "error", "type": "not_found"})
 
     install_transport(monkeypatch, httpx.MockTransport(handler))
+    stale = "00000000-0000-0000-0000-000000000000"
     text = (
-        "Name,Quantity,Scryfall ID\n"
-        "Sol Ring,1,\n"
-        "Sol Ring,1,00000000-0000-0000-0000-000000000000\n"
-        "Not A Real Card,2,\n"
+        "Name,Quantity,Scryfall ID,Set code,Collector number\n"
+        "Sol Ring,1,,,\n"
+        f"Sol Ring,1,{stale},,\n"
+        f"Mire Triton,1,{stale},fdc,115\n"
+        "Not A Real Card,2,,,\n"
     )
     conn = db.connect(db_path)
     summary = import_collection(conn, text.encode(), owner_id=1, imported_by=1)
     assert summary.unresolved == ["Not A Real Card"]
-    assert "1 couldn't be matched on Scryfall and need a printing: Not A Real Card." in summary.message()
+    assert summary.unpinned == 4
+    assert summary.message() == (
+        "Imported 5 cards (3 distinct) from a CSV export. 1 couldn't be found on Scryfall: Not A Real Card."
+        " 4 need a printing picked (the file didn't say which)."
+    )
     rows = conn.execute(
-        "SELECT card_name, scryfall_id, set_code FROM lots WHERE collection_import_id = ? ORDER BY id",
+        "SELECT card_name, scryfall_id, set_code, collector_number FROM lots"
+        " WHERE collection_import_id = ? ORDER BY id",
         (summary.import_id,),
     ).fetchall()
     assert [tuple(r) for r in rows] == [
-        ("Sol Ring", sol_ring["id"], "fdc"), ("Sol Ring", sol_ring["id"], "fdc"),
-        ("Not A Real Card", None, None), ("Not A Real Card", None, None),
+        ("Sol Ring", None, None, None), ("Sol Ring", None, None, None),
+        ("Mire Triton", TRITON, "fdc", "115"),
+        ("Not A Real Card", None, None, None), ("Not A Real Card", None, None, None),
     ]
+    imported = {lot_id for (lot_id,) in conn.execute(
+        "SELECT id FROM lots WHERE collection_import_id = ? AND scryfall_id IS NULL", (summary.import_id,)
+    )}
+    queued = {i for g in printings.unresolved_groups(conn, 1)
+              for i in printings.group_for_lot(conn, g["lot_id"]).lot_ids}
+    assert len(imported) == 4
+    assert imported <= queued  # every unpinned copy is in the printings queue
     assert requests.count("/cards/named") == 1  # one fuzzy retry, for the one miss
+    conn.close()
+
+
+def test_one_import_is_capped(db_path, cache_dir, monkeypatch):
+    monkeypatch.setattr(collection_csv, "MAX_COPIES", 5)
+    conn = db.connect(db_path)
+    with pytest.raises(CollectionImportError, match="6 cards is more than 5"):
+        import_collection(conn, b"Name,Quantity\nSol Ring,3\nCounterspell,3\n", owner_id=1, imported_by=1)
     conn.close()
 
 
@@ -243,6 +267,19 @@ def test_import_permissions(db_path, cache_dir):
     alex = _client(db_path, friend.id)
     assert _upload(alex, 1).status_code == 403
     assert _upload(alex, friend.id).status_code == 303  # their own
+
+
+def test_single_mode_imports_only_into_your_own(db_path, cache_dir):
+    """In single mode every visitor is the admin, so nobody may act for a
+    friend from the web there."""
+    conn = db.connect(db_path)
+    friend = users.create(conn, "Alex", "alex@example.com")
+    conn.close()
+    client = TestClient(create_app(db_path))
+    assert "Import a collection" not in client.get(f"/people/{friend.id}").text
+    assert _upload(client, friend.id).status_code == 403
+    assert "Import a collection" in client.get("/people/1").text
+    assert _upload(client, 1).status_code == 303
 
 
 def test_upload_errors_come_back_as_messages(db_path, cache_dir, monkeypatch):

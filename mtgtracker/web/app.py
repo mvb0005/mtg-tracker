@@ -392,6 +392,14 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
         return render(request, "people.html", people=rows, notice=notice, error=error,
                       can_add_people=may_add_people(request))
 
+    def may_act_for(request: Request, person: users.User) -> bool:
+        """Acting on someone else's collection (importing, later loans) needs
+        a real sign-in mode: in single mode every visitor is the admin."""
+        actor = me(request)
+        if person.id == actor.id:
+            return True
+        return auth.mode in ("dev", "cloudflare") and users.can_act_for(actor, person)
+
     def may_add_people(request: Request) -> bool:
         """Adding a person adds an email to the sign-in allowlist. In single
         mode every visitor is the admin, so the web form stays off there
@@ -416,7 +424,7 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
         conn: sqlite3.Connection = Depends(get_conn),
     ):
         person = load_person(conn, person_id)
-        can_import = users.can_act_for(me(request), person)
+        can_import = may_act_for(request, person)
         imports = conn.execute(
             "SELECT original_filename, format, card_count, imported_at FROM collection_imports"
             " WHERE owner_id = ? ORDER BY id DESC", (person.id,),
@@ -433,9 +441,12 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
         or (as an admin) for someone who hasn't signed in yet."""
         person = load_person(conn, person_id)
         actor = me(request)
-        if not users.can_act_for(actor, person):
+        if not may_act_for(request, person):
             raise HTTPException(status_code=403, detail="You can't import into that collection")
         back = f"/people/{person.id}"
+        # Refuse an oversized body before the form parser spools it.
+        if int(request.headers.get("content-length") or 0) > MAX_UPLOAD_BYTES + 64 * 1024:
+            return redirect(back, error="That file is too big (5 MB at most)")
         form = await request.form()
         upload = form.get("file")
         if upload is None or isinstance(upload, str) or not upload.filename:
