@@ -5,11 +5,21 @@ metadata:
   labels:
     app: mtgtracker
 spec:
-  # SQLite on a ReadWriteOnce volume: exactly one pod, and never two at once
-  # during a rollout.
+  # One pod: SQLite is the database. Rollouts overlap the old and new pod
+  # for a few seconds so deploys have no downtime: the new pod gets traffic
+  # only once /healthz is ready, then the old one drains and stops. That's
+  # safe only because minikube is a single node -- ReadWriteOnce is per node,
+  # so both pods can mount the volume, and SQLite's file locking works across
+  # processes on a local disk. On a multi-node cluster this must go back to
+  # Recreate. A migration runs in the new pod while the old code still
+  # serves, so a migration that rewrites a table should be deployed with
+  # Recreate (see CLAUDE.md).
   replicas: 1
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: mtgtracker
@@ -18,6 +28,8 @@ spec:
       labels:
         app: mtgtracker
     spec:
+      # Room for the preStop pause plus in-flight requests.
+      terminationGracePeriodSeconds: 30
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -58,11 +70,17 @@ spec:
               subPath: scryfall_cache
             - name: tmp
               mountPath: /tmp
+          lifecycle:
+            preStop:
+              # Keep serving while the Service and cloudflared stop routing
+              # here, so no request lands on a pod that's shutting down.
+              exec:
+                command: ["sleep", "5"]
           readinessProbe:
             httpGet:
               path: /healthz
               port: http
-            periodSeconds: 10
+            periodSeconds: 3
           livenessProbe:
             httpGet:
               path: /healthz
