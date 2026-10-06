@@ -1,5 +1,6 @@
 from collections import Counter
 
+from mtgtracker import db
 from mtgtracker.importers.decklist_text import parse
 from mtgtracker.web import queries
 
@@ -60,5 +61,11 @@ def test_export_page_and_downloads(db_path, cache_dir):
     borrow = client.get(f"/decks/{keen}/export/borrow-{alex.id}.txt").text
     assert borrow == "1 Delver of Secrets\n1 Swan Song\n"
     assert client.get(f"/decks/{keen}/export/nope.txt").status_code == 404
+    conn = db.connect(db_path)
+    conn.execute("UPDATE decks SET name = ? WHERE id = ?", ("Heliod's Eclipse", keen))
+    conn.commit()
+    conn.close()
+    named = client.get(f"/decks/{keen}/export/shopping.txt").headers["content-disposition"]
+    assert named == 'attachment; filename="heliods-eclipse-shopping.txt"'
     # Friends can export a deck they can view; nothing in it is private.
     assert _client(db_path, alex.id).get(f"/decks/{keen}/export/decklist.txt").status_code == 200

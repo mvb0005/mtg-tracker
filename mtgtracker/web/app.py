@@ -704,7 +704,8 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
         texts |= {f"borrow-{b['id']}": b["text"] for b in exports["borrow"]}
         if kind not in texts:
             raise HTTPException(status_code=404, detail="No such export")
-        slug = re.sub(r"[^a-z0-9]+", "-", detail["deck"]["name"].lower()).strip("-") or "deck"
+        name = re.sub("['\u2019]", "", detail["deck"]["name"].lower())  # "Heliod's" -> "heliods"
+        slug = re.sub(r"[^a-z0-9]+", "-", name).strip("-") or "deck"
         return PlainTextResponse(
             texts[kind], headers={"Content-Disposition": f'attachment; filename="{slug}-{kind}.txt"'}
         )
