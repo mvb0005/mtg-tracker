@@ -81,19 +81,78 @@
     }
     return list;
   };
-  const render = (card) => {
+  // Double-faced cards: turn an <img> to its other face. It narrows to its
+  // edge, the other face's image is swapped in once it has loaded, and it
+  // widens again (an instant swap with reduced motion).
+  const motionOff = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const turn = async (img, src, alt) => {
+    const next = new Image();
+    next.referrerPolicy = "no-referrer";
+    next.src = src;
+    // Don't hold the card folded for long on a slow connection.
+    const loaded = Promise.race([next.decode().catch(() => {}), new Promise((done) => setTimeout(done, 1200))]);
+    const swap = () => {
+      img.src = src;
+      if (alt) img.alt = alt;
+    };
+    if (motionOff.matches || !img.animate) {
+      await loaded;
+      swap();
+      return;
+    }
+    const out = img.animate([{ transform: "scaleX(1)" }, { transform: "scaleX(0)" }],
+                            { duration: 120, easing: "ease-in", fill: "forwards" });
+    await Promise.all([out.finished, loaded]);
+    swap();
+    img.animate([{ transform: "scaleX(0)" }, { transform: "scaleX(1)" }], { duration: 120, easing: "ease-out" });
+    out.cancel();
+  };
+
+  // A flip button for a card image: toggles aria-pressed and turns `img`.
+  // `onFlip(back)` lets the caller follow along (e.g. which face's text to hide).
+  const flipButton = (className, label, img, front, back, names, onFlip) => {
+    const button = el("button", className);
+    button.type = "button";
+    button.title = "Flip";
+    button.setAttribute("aria-label", label);
+    button.setAttribute("aria-pressed", "false");
+    button.append(el("span", null, "⟲"));
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const toBack = button.getAttribute("aria-pressed") !== "true";
+      button.setAttribute("aria-pressed", String(toBack));
+      turn(img, toBack ? back : front, names[toBack ? 1 : 0]);
+      if (onFlip) onFlip(toBack);
+    });
+    return button;
+  };
+
+  const render = (card, { flipped = false } = {}) => {
     const body = el("div", "card-panel-body");
+    const faceNames = (card.faces || []).map((face) => face.name || card.name);
 
     // The image slot always has the card's shape (CSS aspect-ratio), even
     // before the image loads or when there's none, so the text below never
-    // jumps while hovering quickly across cards.
+    // jumps while hovering quickly across cards. `data-face` says which
+    // face the image shows (the pop-up hides that face's repeated text).
     if (card.image) {
+      const art = el("div", "card-panel-art");
+      const back = flipped && card.back_image;
+      art.dataset.face = back ? "1" : "0";
       const img = el("img", "card-panel-image");
-      img.alt = card.name;
+      img.alt = (back ? faceNames[1] : faceNames[0]) || card.name;
       img.referrerPolicy = "no-referrer";
       img.decoding = "async";
-      img.src = card.image;
-      body.append(img);
+      img.src = back ? card.back_image : card.image;
+      art.append(img);
+      if (card.back_image) {
+        const button = flipButton("card-panel-flip", `Show the other face of ${card.name}`, img,
+                                  card.image, card.back_image, faceNames,
+                                  (toBack) => { art.dataset.face = toBack ? "1" : "0"; });
+        button.setAttribute("aria-pressed", String(Boolean(back)));
+        art.append(button);
+      }
+      body.append(art);
     } else {
       body.append(el("div", "card-panel-image card-panel-placeholder", card.name));
     }
@@ -160,7 +219,7 @@
     const card = parse(source);
     if (!card) return;
     current = source;
-    panel.replaceChildren(render(card));
+    panel.replaceChildren(render(card, { flipped: source.classList.contains("flipped") }));
   };
 
   // Tap-to-open sheet when there's no side panel.
@@ -177,7 +236,7 @@
     const card = parse(source);
     if (!card) return false;
     sheetSource = source;
-    content.replaceChildren(render(card));
+    content.replaceChildren(render(card, { flipped: source.classList.contains("flipped") }));
     const cards = sheetCards();
     const index = cards.indexOf(source);
     position.textContent = index >= 0 && cards.length > 1 ? `${index + 1} / ${cards.length}` : "";
@@ -225,6 +284,26 @@
     });
     return true;
   };
+
+  // Tile flip buttons (double-faced cards): turn the tile's image, and
+  // the side panel with it if it's showing this card.
+  document.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest(".tile-flip") : null;
+    if (!button) return;
+    const tile = button.closest(".tile");
+    const img = tile && tile.querySelector(".tile-art img");
+    if (!img) return;
+    const toBack = !tile.classList.contains("flipped");
+    tile.classList.toggle("flipped", toBack);
+    button.setAttribute("aria-pressed", String(toBack));
+    const card = parse(tile);
+    const names = card && card.faces ? card.faces.map((face) => face.name) : [];
+    turn(img, toBack ? button.dataset.back : button.dataset.front, names[toBack ? 1 : 0]);
+    if (current === tile) {
+      current = null;
+      show(tile);
+    }
+  });
 
   document.addEventListener("mouseover", (event) => show(event.target));
   document.addEventListener("focusin", (event) => show(event.target));

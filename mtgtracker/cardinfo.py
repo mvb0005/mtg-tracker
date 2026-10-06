@@ -52,6 +52,11 @@ class CardInfo:
     # Color identity (Scryfall "color_identity"): mana symbols anywhere on
     # the card, used for a deck's commander colors. None when not cached.
     color_identity: tuple[str, ...] | None = None
+    # The back face's image, for double-faced cards (transform, modal,
+    # reversible) -- whose faces each have their own image. None for
+    # single-faced cards, and for split/adventure/flip cards, which print
+    # both halves on the front.
+    back_image: str | None = None
 
     def category(self, card_name: str) -> str:
         if self.type_line:
@@ -80,6 +85,14 @@ def image_url(card: dict) -> str | None:
     return uris.get("normal") or uris.get("small")
 
 
+def back_image_url(card: dict) -> str | None:
+    faces = card.get("card_faces") or []
+    if len(faces) < 2 or card.get("image_uris"):
+        return None
+    uris = faces[1].get("image_uris") or {}
+    return uris.get("normal") or uris.get("small")
+
+
 def _stats(face: dict) -> str | None:
     if face.get("power") is not None:
         return f"{face['power']}/{face['toughness']}"
@@ -94,6 +107,7 @@ def _info(card: dict, *, exact: bool) -> CardInfo:
     faces = card.get("card_faces") or [card]
     return CardInfo(
         image=image_url(card),
+        back_image=back_image_url(card),
         type_line=card.get("type_line"),
         exact=exact,
         cmc=card.get("cmc"),

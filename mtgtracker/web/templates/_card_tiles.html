@@ -13,6 +13,7 @@
   "name": c.card_name,
   "wanted": c.wanted or false,
   "image": c.art.image,
+  "back_image": c.art.back_image,
   "exact": c.art.exact,
   "faces": c.art.faces | list,
   "rarity": c.art.rarity,
@@ -62,6 +63,10 @@
     {% endif %}
     {% if c.qty > 1 %}<span class="tile-qty">{{ c.qty }}×</span>{% endif %}
     {% if c.finish in ("foil", "etched") %}<span class="tile-finish">{{ c.finish }}</span>{% endif %}
+    {% if c.art.image and c.art.back_image %}
+      <button type="button" class="tile-flip" aria-pressed="false" aria-label="Show the back face of {{ c.card_name }}" title="Flip"
+              data-front="{{ c.art.image }}" data-back="{{ c.art.back_image }}"><span aria-hidden="true">⟲</span></button>
+    {% endif %}
     {% if c.wanted and friends %}
       <span class="tile-flag borrow">From {{ friends[0].name if friends | length == 1 else (friends | length) ~ " friends" }}</span>
     {% elif c.wanted %}
