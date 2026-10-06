@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% set active = "decks" %}
+{% block title %}Export {{ deck.name }}{% endblock %}
+{% block body_attrs %}{{ theme_attrs(identity) }}{% endblock %}
+{% macro export_block(id, title, count, text, note, href) %}
+<section class="export-block" aria-labelledby="{{ id }}-title">
+  <h2 id="{{ id }}-title">{{ title }} <span class="subtle">({{ count }})</span></h2>
+  <p class="subtle">{{ note }}</p>
+  <textarea id="{{ id }}" class="export-text" readonly spellcheck="false" rows="{{ [[text.count("\n") + 1, 4] | max, 16] | min }}">{{ text }}</textarea>
+  <div class="export-actions">
+    <button type="button" class="primary" data-copy="{{ id }}">Copy</button>
+    <a href="{{ href }}" download>Download .txt</a>
+    <span class="export-status subtle" role="status" aria-live="polite"></span>
+  </div>
+</section>
+{% endmacro %}
+{% block content %}
+<header class="deck-hero">
+  <p class="eyebrow"><a href="/decks/{{ deck.id }}">{{ deck.name }}</a> <span aria-hidden="true">/</span> Export</p>
+  <h1>Export</h1>
+</header>
+
+{{ export_block("decklist", "Decklist", exports.decklist_count, exports.decklist,
+                "Commander and Deck sections, for Moxfield, Archidekt, Arena or another deck's import here. Cards you own include their printing.",
+                "/decks/" ~ deck.id ~ "/export/decklist.txt") }}
+
+{% if exports.shopping_count %}
+{{ export_block("shopping", "Shopping list", exports.shopping_count, exports.shopping,
+                "What's still to acquire after what friends have, one line per card -- paste into TCGplayer Mass Entry or Card Kingdom.",
+                "/decks/" ~ deck.id ~ "/export/shopping.txt") }}
+{% endif %}
+
+{% for b in exports.borrow %}
+{{ export_block("borrow-" ~ b.id, "Borrow from " ~ b.name, b.count, b.text,
+                "Cards " ~ b.name ~ " has that this deck still needs.",
+                "/decks/" ~ deck.id ~ "/export/borrow-" ~ b.id ~ ".txt") }}
+{% endfor %}
+
+<script>
+  // Copy buttons: the clipboard API where available (HTTPS or localhost),
+  // otherwise select the text so it can be copied by hand.
+  document.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-copy]");
+    if (!button) return;
+    const area = document.getElementById(button.dataset.copy);
+    const status = button.parentElement.querySelector(".export-status");
+    try {
+      await navigator.clipboard.writeText(area.value);
+      status.textContent = "Copied.";
+    } catch {
+      area.focus();
+      area.select();
+      status.textContent = "Selected -- copy with Ctrl+C / Cmd+C.";
+    }
+    setTimeout(() => { status.textContent = ""; }, 2500);
+  });
+</script>
+{% endblock %}

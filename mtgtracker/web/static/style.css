@@ -1037,3 +1037,17 @@ body[data-identity] .deck-section-head { border-bottom: 0; padding-bottom: 6px; 
 .tile-flip:focus-visible, .card-panel-flip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tile-flip[aria-pressed="true"] span, .card-panel-flip[aria-pressed="true"] span { display: inline-block; transform: scaleX(-1); }
 @media (pointer: coarse) { .tile-flip { width: 36px; height: 36px; } }
+/* Deck export: copyable text blocks. */
+.export-block { margin: 0 0 28px; }
+.export-block p { margin: 0 0 8px; }
+.export-text {
+  width: 100%;
+  font: 0.85rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}
+.export-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 8px; }

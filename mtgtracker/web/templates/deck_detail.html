@@ -14,6 +14,7 @@
     {% if deck.version %}<a href="/decks/{{ deck.id }}/versions/{{ deck.version }}">Version {{ deck.version }}</a>{% else %}Not versioned yet{% endif %}
     · since {{ deck.created_at[:10] }}
     {%- if can_edit %} · <a class="action-link" href="/decks/{{ deck.id }}/modify">Modify deck</a>{% endif %}
+    · <a class="action-link" href="/decks/{{ deck.id }}/export">Export</a>
   </p>
 </header>
 

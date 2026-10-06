@@ -676,6 +676,39 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
         return change_action(deck_id, conn, lambda: deckmods.apply_changes(conn, deck_id, note),
                              "Applied as version {result}.", user=me(request))
 
+    # --- exports -------------------------------------------------------------
+
+    def export_detail(request: Request, conn: sqlite3.Connection, deck_id: int) -> dict:
+        detail = queries.get_deck(conn, deck_id, viewer_id=me(request).id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="No such deck")
+        return detail
+
+    @app.get("/decks/{deck_id}/export", response_class=HTMLResponse)
+    def deck_export_page(deck_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+        """The deck as text to copy or download: decklist, shopping list, and
+        what to borrow from each friend. Read-only, so friends can use it too."""
+        detail = export_detail(request, conn, deck_id)
+        return render(
+            request, "deck_export.html", deck=detail["deck"], identity=detail["identity"],
+            exports=queries.deck_exports(detail),
+        )
+
+    @app.get("/decks/{deck_id}/export/{kind}.txt", response_class=PlainTextResponse)
+    def deck_export_text(
+        deck_id: int, kind: str, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+    ):
+        detail = export_detail(request, conn, deck_id)
+        exports = queries.deck_exports(detail)
+        texts = {"decklist": exports["decklist"], "shopping": exports["shopping"]}
+        texts |= {f"borrow-{b['id']}": b["text"] for b in exports["borrow"]}
+        if kind not in texts:
+            raise HTTPException(status_code=404, detail="No such export")
+        slug = re.sub(r"[^a-z0-9]+", "-", detail["deck"]["name"].lower()).strip("-") or "deck"
+        return PlainTextResponse(
+            texts[kind], headers={"Content-Disposition": f'attachment; filename="{slug}-{kind}.txt"'}
+        )
+
     @app.get("/decks/{deck_id}/versions/{version}", response_class=HTMLResponse)
     def deck_version(
         deck_id: int, version: int, request: Request, view: str = "",

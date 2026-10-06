@@ -140,6 +140,11 @@ Each bucket carries a CSS `fill` (`_fill`), which templates use as inline `backg
   - The ledger shows "Friends have".
 - **Display only:** there are no loans yet, so nothing moves.
 
+**Deck export** (`/decks/{id}/export`, linked as "Export" on every deck page, friends included; nothing in it is private): `queries.deck_exports(get_deck(...))` builds three kinds of text, each with Copy (clipboard API, else select) and a `/decks/{id}/export/{kind}.txt` download (`decklist`, `shopping`, `borrow-{friend id}`).
+- **decklist:** "Commander"/"Deck" sections, front-face names, and `(SET) number` plus `*F*`/`*E*` for owned pinned copies. It round-trips through `importers/decklist_text.parse` (tested).
+- **shopping:** what's still to acquire after friends' copies. Reassemble's `acquire` counts only the copies beyond what friends have between them.
+- **borrow-{friend id}:** each friend's borrow list.
+
 **Collection import** (`importers/collection_csv.py`, migration 0007): a collection CSV becomes the target user's lots, one per copy, with no transaction.
 - **Formats:** columns are matched by header alias, so ManaBox, Moxfield, Archidekt, or any CSV with a Name column works. `parse()` is all or nothing and raises `CollectionImportError` naming the line.
 - **Money and metadata:** a USD purchase price becomes that copy's `allocated_cost_cents` through `parse_cents`. Other currencies, non-NM condition, non-English, and proxies go into `lots.notes`. `acquired_date` comes from the Added column, or today.

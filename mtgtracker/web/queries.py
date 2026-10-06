@@ -316,8 +316,10 @@ def _borrow_lists(wanted: list[dict]) -> tuple[list[dict], list[tuple[str, int]]
     by_friend: dict[int, dict] = {}
     nobody: list[tuple[str, int]] = []
     for g in wanted:
-        if not g["friends"]:
-            nobody.append((g["card_name"], g["qty"]))
+        # Copies beyond what friends have between them still need buying.
+        short = g["qty"] - min(g["qty"], sum(f["qty"] for f in g["friends"]))
+        if short:
+            nobody.append((g["card_name"], short))
         for f in g["friends"]:
             entry = by_friend.setdefault(f["id"], {"id": f["id"], "name": f["name"], "cards": []})
             entry["cards"].append((g["card_name"], min(g["qty"], f["qty"])))
@@ -326,6 +328,53 @@ def _borrow_lists(wanted: list[dict]) -> tuple[list[dict], list[tuple[str, int]]
         entry["total"] = sum(n for _, n in entry["cards"])
     return (sorted(by_friend.values(), key=lambda e: (-e["total"], e["name"].casefold())),
             sorted(nobody, key=lambda item: item[0].casefold()))
+
+
+def _export_name(card_name: str) -> str:
+    """Front face only ("Delver of Secrets // Insectile Aberration" -> "Delver
+    of Secrets"): what Moxfield, Archidekt, Arena and shop mass entry accept."""
+    return card_name.split(" // ")[0]
+
+
+def _export_text(counts: Counter) -> str:
+    return "".join(f"{n} {line}\n" for line, n in sorted(counts.items(), key=lambda kv: kv[0].casefold()))
+
+
+def deck_exports(detail: dict) -> dict:
+    """Plain-text exports of a get_deck() result:
+    - decklist: "Commander" and "Deck" sections, one "N Name" line per card,
+      with "(SET) number" and *F*/*E* for owned copies whose printing is
+      known -- the format importers/decklist_text.py (and Moxfield,
+      Archidekt) read back;
+    - shopping: what's still to acquire after what friends have (shop
+      mass-entry format);
+    - borrow: [(friend, text)] for each friend who has some of the rest.
+    Each list's card count is alongside its text."""
+    commander = detail["deck"]["commander"]
+    sections: dict[str, Counter] = {"Commander": Counter(), "Deck": Counter()}
+    for g in detail["groups"]:
+        line = _export_name(g["card_name"])
+        if not g["wanted"] and g["set_code"] and g["collector_number"]:
+            line += f" ({g['set_code'].upper()}) {g['collector_number']}"
+            line += {"foil": " *F*", "etched": " *E*"}.get(g["finish"], "")
+        sections["Commander" if g["card_name"] == commander else "Deck"][line] += g["qty"]
+    decklist = "\n".join(f"{name}\n{_export_text(counts)}" for name, counts in sections.items() if counts)
+
+    shopping: Counter = Counter()
+    for name, n in detail["acquire"]:
+        shopping[_export_name(name)] += n
+    borrow = []
+    for friend in detail["borrow_from"]:
+        counts = Counter()
+        for name, n in friend["cards"]:
+            counts[_export_name(name)] += n
+        borrow.append({"id": friend["id"], "name": friend["name"], "text": _export_text(counts),
+                       "count": sum(counts.values())})
+    return {
+        "decklist": decklist, "decklist_count": sum(sum(c.values()) for c in sections.values()),
+        "shopping": _export_text(shopping), "shopping_count": sum(shopping.values()),
+        "borrow": borrow,
+    }
 
 
 def _wanted_rows(rows) -> list[dict]:
