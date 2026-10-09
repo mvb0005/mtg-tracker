@@ -317,6 +317,25 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
             owner=users.get(conn, detail["deck"]["owner_id"]), **detail,
         )
 
+    # Deck notes: the owner's free-form context for a deck (plan, budget
+    # rules, decisions and why) -- shown on the deck page, private to the
+    # owner, and readable as text so an assistant can pick them up later.
+    MAX_NOTES = 20_000
+
+    @app.post("/decks/{deck_id}/notes")
+    async def deck_save_notes(deck_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+        require_own_deck(conn, deck_id, me(request))
+        text = str((await request.form()).get("notes", "")).replace("\r\n", "\n").strip()
+        if len(text) > MAX_NOTES:
+            return redirect(f"/decks/{deck_id}", error=f"Notes are limited to {MAX_NOTES:,} characters")
+        conn.execute("UPDATE decks SET notes = ? WHERE id = ?", (text or None, deck_id))
+        conn.commit()
+        return redirect(f"/decks/{deck_id}", notice="Notes saved." if text else "Notes cleared.")
+
+    @app.get("/decks/{deck_id}/notes.txt", response_class=PlainTextResponse)
+    def deck_notes_text(deck_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+        return require_own_deck(conn, deck_id, me(request))["notes"] or ""
+
     @app.post("/decks/{deck_id}/commander")
     async def deck_set_commander(
         deck_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)

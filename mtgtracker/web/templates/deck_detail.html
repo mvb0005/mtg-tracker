@@ -29,6 +29,20 @@
 </dl>
 {% if list_cost_cents is not none %}<p class="footnote">Cost basis sums the owned cards on this list, including ones lent to other decks, so a card on two lists counts toward both. Cards still to acquire aren't counted.</p>{% endif %}
 
+{% if can_edit %}
+<details class="deck-notes" id="notes"{% if deck.notes %} open{% endif %}>
+  <summary><h2>Notes</h2></summary>
+  {% if deck.notes %}<div class="deck-notes-text">{{ deck.notes }}</div>{% else %}<p class="subtle">No notes yet. Write down the plan, your rules for this deck (budget, what not to borrow) and why cards are in or out, so they're here next time.</p>{% endif %}
+  <details class="deck-notes-edit">
+    <summary class="action-link">{{ "Edit notes" if deck.notes else "Add notes" }}</summary>
+    <form method="post" action="/decks/{{ deck.id }}/notes">
+      <textarea name="notes" rows="14" maxlength="20000" class="export-text">{{ deck.notes or "" }}</textarea>
+      <div class="export-actions"><button type="submit" class="primary">Save notes</button><span class="subtle">Only you can see these.</span></div>
+    </form>
+  </details>
+</details>
+{% endif %}
+
 <h2>Reassemble</h2>
 {% if not pull_from and not acquire and not borrow_from %}
 <p><span class="tag ok">assembled</span> Every card on the list is in the deck.</p>

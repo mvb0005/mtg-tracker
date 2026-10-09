@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
 import typer
@@ -133,6 +134,27 @@ def import_order(
                 typer.echo(f"      ambiguous: {entry['name']} ({reason}) -> {candidates}")
             for name in report.not_found:
                 typer.echo(f"      not found: {name}")
+
+
+@app.command("deck-notes")
+def deck_notes(
+    deck_id: int = typer.Argument(..., help="Deck id (see list-decks)"),
+    set_file: Path = typer.Option(
+        None, "--set", help="Replace the notes with this file's text ('-' for stdin)"
+    ),
+    db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db", help="SQLite database path"),
+):
+    """Print a deck's notes, or replace them with --set."""
+    conn = _connect(db_path)
+    if conn.execute("SELECT 1 FROM decks WHERE id = ?", (deck_id,)).fetchone() is None:
+        raise typer.BadParameter(f"no deck {deck_id}")
+    if set_file is not None:
+        text = (sys.stdin.read() if str(set_file) == "-" else set_file.read_text()).strip()
+        conn.execute("UPDATE decks SET notes = ? WHERE id = ?", (text or None, deck_id))
+        conn.commit()
+        typer.echo(f"Saved {len(text)} characters of notes for deck {deck_id}.")
+        return
+    typer.echo(conn.execute("SELECT notes FROM decks WHERE id = ?", (deck_id,)).fetchone()[0] or "")
 
 
 @app.command("list-decks")

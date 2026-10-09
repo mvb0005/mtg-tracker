@@ -1051,3 +1051,10 @@ body[data-identity] .deck-section-head { border-bottom: 0; padding-bottom: 6px; 
   resize: vertical;
 }
 .export-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 8px; }
+/* Deck notes: the owner's context for a deck, shown as written. */
+.deck-notes { margin: 0 0 8px; }
+.deck-notes > summary { cursor: pointer; list-style: none; }
+.deck-notes > summary::-webkit-details-marker { display: none; }
+.deck-notes-text { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 72ch; margin: 0 0 10px; line-height: 1.55; }
+.deck-notes-edit > summary { cursor: pointer; display: inline-block; margin-bottom: 8px; }
+.deck-notes-edit textarea { margin-bottom: 4px; }

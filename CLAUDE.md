@@ -140,6 +140,11 @@ Each bucket carries a CSS `fill` (`_fill`), which templates use as inline `backg
   - The ledger shows "Friends have".
 - **Display only:** there are no loans yet, so nothing moves.
 
+**Deck notes** (`decks.notes`, the column from migration 0001, so no new migration): the owner's free-form context for a deck, such as its plan, budget rules, and why cards are in or out.
+- **Web:** shown on the deck page as written (`white-space: pre-wrap`, autoescaped) with an owner-only edit form, `POST /decks/{id}/notes`, limited to `MAX_NOTES` characters. Empty text clears it.
+- **Reading:** `GET /decks/{id}/notes.txt` serves the plain text, and `mtg deck-notes ID [--set FILE|-]` reads or writes it locally.
+- **Privacy:** notes are private like money, so friends get 403. They're the place to keep a deck's context between chats. Read them before working on a deck and update them when decisions change; version notes stay the change log.
+
 **Deck export** (`/decks/{id}/export`, linked as "Export" on every deck page, friends included; nothing in it is private): `queries.deck_exports(get_deck(...))` builds three kinds of text, each with Copy (clipboard API, else select) and a `/decks/{id}/export/{kind}.txt` download (`decklist`, `shopping`, `borrow-{friend id}`).
 - **decklist:** "Commander"/"Deck" sections, front-face names, and `(SET) number` plus `*F*`/`*E*` for owned pinned copies. It round-trips through `importers/decklist_text.parse` (tested).
 - **shopping:** what's still to acquire after friends' copies. Reassemble's `acquire` counts only the copies beyond what friends have between them.
