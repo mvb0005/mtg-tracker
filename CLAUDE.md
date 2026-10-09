@@ -175,6 +175,13 @@ Each bucket carries a CSS `fill` (`_fill`), which templates use as inline `backg
 
 **Seed decklists** (`seed/precon_decklists/*.json`) have the keys `deck_name`, `product_display_name` (must exactly match the cleaned product title), `format`, `commander`, `set_code`, `cards` (unique non-basic names), and `basics` (name → count). `cards` plus the `basics` counts must total 100. A test enforces this.
 
+## Deckbuilding skill
+
+`.claude/skills/mtg-deckbuilding/` is a Claude Code skill. Use it for any deck design, tuning, pricing or shopping work.
+- **SKILL.md** holds the workflow: deck notes first, the commander's rules gotchas, a fundamentals checklist, Scryfall etiquette, ownership checks, budget and cart diffing, and rehearse-then-apply.
+- **scripts/** holds the helpers: `check_list.py` (validity plus heuristic slot counts), `prices.py` (cheapest paper USD, budget cap), `who_owns.py` (copies by owner and location, from a pull-db snapshot), and `apply_list.py`. `apply_list.py` diffs a deck against a target list, then queues and applies the changes as one version through the Modify forms, with planned adds only so nothing moves between decks.
+- Run them from the repo root with `.venv/bin/python`. Ruff covers them.
+
 ## minikube
 
 `Dockerfile` plus `deploy/k8s/` (kustomize), driven by `deploy/minikube.sh`.

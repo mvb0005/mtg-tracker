@@ -1,0 +1,105 @@
+---
+name: mtg-deckbuilding
+description: Build, tune, or shop for a Magic: The Gathering Commander deck in mtgtracker -- designing a list around a commander, proposing swaps, checking a list against deckbuilding fundamentals (ratios, mana, curve, defense), pricing and budgeting, comparing a store cart, and applying changes to a deck on the site as a new version. Use whenever the user asks to make, improve, cut, upgrade, price, or buy for a deck.
+---
+
+# Commander deckbuilding in mtgtracker
+
+Work from the deck's own context, keep to the user's rules, verify with data
+instead of memory, and change the live deck only through the app's own
+Modify flow, rehearsed first.
+
+## 0. Load the context first
+
+1. **Read the deck's notes.** The notes hold the plan, the user's rules and past decisions. Get them with `curl -s https://mtg.example.com/decks/<id>/notes.txt` (live), or `.venv/bin/mtg deck-notes <id>` (local DB).
+   - Typical rules: a budget cap per card, "don't borrow from friends", "keep my precons intact", play-style likes and dislikes.
+   - Honor them without re-asking. If notes are empty, ask about budget, play style and borrowing once, then write the answers down (step 6).
+2. **Get the current list.** It's at `/decks/<id>/export/decklist.txt`. Shopping and borrow lists are at `/export/shopping.txt` and `/export/borrow-<friend id>.txt`.
+3. **For ownership questions, use a snapshot.** Take one with `deploy/minikube.sh pull-db <scratch>/x.db` (an online backup) and query that copy. Never read the live file directly.
+
+## 1. Start from the commander
+
+- **Read the exact oracle text** of both faces from Scryfall, not memory. Fetch by set and number for double-faced cards (`scryfall.fetch_collection([{"set":..,"collector_number":..}])`).
+- **Name the engine in one sentence.** For example: "make opponents draw, then cast discounted X spells at instant speed."
+- **List the rules gotchas.** Typical ones:
+  - A double-faced commander that leaves the battlefield comes back front face up, so blink and bounce reset a transform.
+  - Commander tax goes up by {2} for each recast from the command zone.
+  - Cost reducers only reduce generic mana, which includes X.
+  - "Destroy all other creatures" hits your own commander.
+- **Color identity covers both faces** and every mana symbol in the rules text.
+
+## 2. Fundamentals checklist (a 99-card list plus the commander)
+
+Use these as guardrails, not as laws. A strong theme can bend them, so say so when it does.
+
+| Slot | Typical | Notes |
+|---|---|---|
+| Lands | 35–38 | 33–34 with a low curve and 10+ ramp. Count colorless utility lands against your colored needs. |
+| Ramp | 10+ | Prefer 2-mana rocks and land ramp. Count catch-up ramp only if opponents usually lead on lands. |
+| Card draw / advantage | 10+ | Engines over one-shots. |
+| Targeted interaction | 8–10 | Removal plus counterspells, with instant speed preferred. Include some artifact/enchantment answers. |
+| Board wipes | 2–4 | Essential if the deck helps opponents (group hug) or plays defensively. |
+| Commander protection | 2–4 | Hexproof, indestructible, phasing, or blink if a zone change is fine. |
+| Win conditions | 3–5 named | Say how each one actually ends the game. |
+| Graveyard hate | 1–3 | Especially if opponents discard, wheel or reanimate. |
+| Defense | — | Blockers that can stop fliers, pillowfort, fog, or wipes. Check fliers specifically. |
+
+- **Curve:** average nonland mana value around 3 or less, and most of the deck at 4 or less.
+- **Redundancy:** the deck's critical effect, the one that makes the engine run, needs 3 or more sources.
+- **Colors:** count colored pips per color and set the basics ratio to match. Each fetch or tutor effect, like Plains fetchers, raises the share of that basic. Watch for tapped lands in a deck that wants to act at instant speed.
+- **Hand size:** decks that draw a lot need a way to keep extra cards, like Reliquary Tower, Thought Vessel or Spellbook.
+- **Synergy without a pile:** cut cards that only work with one other card unless that pair is the point of the deck.
+- **Table fit:** match the user's taste. Avoid stax and locks if they want a fun or casual deck, and say when a card is likely to feel unfun. Wizards' Commander brackets and its "Game Changers" list are a useful shared vocabulary for power level.
+
+Run `scripts/check_list.py` on any candidate list. It checks the count, singleton rule, color identity and legality, and gives an approximate count for each slot. Then reason about the gaps it reports. Its categories are heuristic and read from rules text, so confirm a borderline card by hand.
+
+## 3. Finding cards
+
+- **Search with Scryfall syntax** against the API, cache first:
+  - `id<=wu legal:commander game:paper o:"opponent's turn"`
+  - `order=edhrec` brings well-known cards to the top.
+- **Be polite to Scryfall.** Send `scryfall.USER_AGENT`, wait 0.3s or more between requests, and back off on HTTP 429. Batch with `scryfall.fetch_collection`, which answers known cards from the cache and only fetches the missing ones.
+  - If you get a run of 429s or "Couldn't reach Scryfall", stop and wait a minute or more. A burst of searches can get you blocked for a while.
+- **Check ownership before recommending a purchase.** Run `scripts/who_owns.py <db> <names...>` to see the user's copies and friends' copies, and which deck holds each.
+  - A friend's loose copies can be borrowed, unless the notes say otherwise.
+  - A copy in another of the user's decks would have to *move*. Say so.
+
+## 4. Budget and shopping
+
+- **Price with `scripts/prices.py`.** It reports the cheapest paper USD printing and flags anything over the budget cap from the notes.
+  - Store prices often run 50–100% above market. When you compare a cart, show store price against market price.
+- **Apply the user's exceptions explicitly**, for example "over $5 only if it's about the deck's theme". Name each over-cap card and the reason it qualifies.
+- **For a store cart:** diff it against the intended list. Report missing cards, extra cards, cards the user already owns elsewhere, out-of-stock lines and markups. The total must reach exactly 100 including basics and borrowed cards.
+- **Cheaper routes:** TCGplayer Mass Entry plus cart Optimize is cheapest, Card Kingdom is a single seller, or split the order and buy the big-markup cards online. Ask the local store for a whole-deck discount. Proxy-test cards before buying expensive ones.
+- **Shopping list format:** `N Name` per line, front face names only. That's the same as the app's `shopping.txt`.
+
+## 5. Proposing and applying changes
+
+1. **Propose swaps as a table:** Add | price | Replaces | why. Each change should fix a named gap or improve the engine. Keep the count at exactly 100.
+2. **When the user agrees, change the live deck through the app's Modify flow.** Never write the database directly. Use `scripts/apply_list.py`:
+   - It diffs the deck against a target list (or takes explicit pairs), queues each add as a planned change, pairs it with a cut, and applies everything as **one version** with a note.
+   - Run `--plan` first and read the swaps.
+   - **Rehearse:** `pull-db` a scratch copy, `mtg serve --db <copy> --port 87xx`, and run against `http://localhost:87xx`. Verify, then `pull-db` a backup, then run against the live site.
+3. **Watch what applying does.** Adding a card the user owns that sits in another deck *moves* it into this deck, and the other deck shows it as away.
+   - `apply_list.py` always adds cards as planned (to acquire), so nothing moves. Link an owned copy on the Modify page ("Use one I own") only when the user wants that card moved.
+   - Cutting removes only this deck's entry, so it never touches the other deck.
+4. **Verify after applying:** the live decklist matches the target exactly, the version went up by one, other decks' counts are unchanged, and `PRAGMA foreign_key_check` on a fresh snapshot is empty.
+5. **Never deploy code** as part of deckbuilding. Deploying is a separate step that needs the user's explicit OK.
+
+## 6. Write it down
+
+After any decision, update the deck notes in the form on the deck page, or POST `notes=` to `/decks/<id>/notes`, keeping what's already there. Record:
+- the plan, in one or two lines
+- the user's rules and their exceptions
+- key rules interactions
+- cuts the user rejected, or cards they want kept, so you don't suggest them again
+- shopping status: what's bought and what's still needed
+
+Keep the notes short and current. Edit stale lines rather than appending forever.
+
+## Scripts (run from the repo root with `.venv/bin/python`)
+
+- `scripts/check_list.py LIST [--commander NAME]`: count, singleton rule, color identity, legality, slot counts, curve and pips. LIST is decklist text: `Commander` and `Deck` sections, `N Name` lines.
+- `scripts/prices.py [--cap 5] NAME... | -`: cheapest paper USD per card, the total, and anything over the cap.
+- `scripts/who_owns.py DB NAME... | -`: every owner's copies of each card, and where they are.
+- `scripts/apply_list.py BASE DECK_ID --db SNAPSHOT (--target LIST | --pairs JSON) [--plan] [--note TEXT]`: diff, queue, pair and apply as one version.
