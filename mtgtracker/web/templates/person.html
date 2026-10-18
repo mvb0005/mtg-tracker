@@ -23,4 +23,9 @@
 </ul>
 {% endif %}
 {% endif %}
-{% endblock %}
+{% if activity %}
+<h2>Recent activity</h2>
+<ul class="import-history">
+  {% for a in activity %}<li>{{ a.at[:16].replace("T", " ") }} UTC · {{ a.actor_name }}{% if a.actor_id != a.principal_id %} for {{ a.principal_name }}{% endif %} · {{ a.action }}{% if a.notice %} · {{ a.notice }}{% endif %}</li>{% endfor %}
+</ul>
+{% endif %}{% endblock %}

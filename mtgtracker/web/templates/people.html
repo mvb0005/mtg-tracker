@@ -30,4 +30,37 @@
   <button type="submit" class="primary">Add person</button>
 </form>
 {% endif %}
-{% endblock %}
+{% if can_manage_system %}
+<h2>System users</h2>
+<p class="subtle">Automated users (Claude) that act for a person you name with <code>X-Act-For</code>. Each signs in with a Cloudflare Access service token; only its Client ID is kept here, never the secret. Risky actions need a confirmed preview. Add a system user with <code>mtg add-system-user</code>.</p>
+{% for s in system_users %}
+<h3>{{ s.user.display_name }}{% if s.user.disabled %} <span class="tag">disabled</span>{% endif %}</h3>
+{% if s.credentials %}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Label</th><th>Client ID</th><th>Created</th><th>Last used</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {% for c in s.credentials %}
+    <tr>
+      <td class="name">{{ c.label }}</td>
+      <td>…{{ c.cf_client_id[-6:] }}</td>
+      <td>{{ c.created_at[:10] }}</td>
+      <td>{{ c.last_used_at[:16].replace("T", " ") if c.last_used_at else "never" }}</td>
+      <td>{% if c.revoked_at %}<span class="tag">revoked {{ c.revoked_at[:10] }}</span>{% else %}active{% endif %}</td>
+      <td>{% if not c.revoked_at %}<form method="post" action="/system-users/credentials/{{ c.id }}/revoke"><button type="submit">Revoke</button></form>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}<p class="subtle">No credentials yet.</p>{% endif %}
+<form class="import-form" method="post" action="/system-users/{{ s.user.id }}/{{ 'enable' if s.user.disabled else 'disable' }}">
+  <button type="submit">{{ "Enable" if s.user.disabled else "Disable" }} {{ s.user.display_name }}</button>
+</form>
+<form class="import-form" method="post" action="/system-users/{{ s.user.id }}/credentials">
+  <label class="field">Label <input type="text" name="label" required maxlength="80"></label>
+  <label class="field">Client ID <input type="text" name="cf_client_id" required maxlength="200" autocomplete="off"></label>
+  <button type="submit" class="primary">Add credential</button>
+</form>
+{% else %}<p class="subtle">No system users.</p>{% endfor %}
+{% endif %}{% endblock %}

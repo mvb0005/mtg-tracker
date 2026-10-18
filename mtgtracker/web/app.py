@@ -16,19 +16,21 @@ import functools
 import hashlib
 import os
 import re
+import secrets
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 
-from mtgtracker import db
+from mtgtracker import confirm, db
 from mtgtracker.cardinfo import BASIC_LAND_NAMES, SECTION_ORDER
 from mtgtracker.web import filters, middleware, queries
 from mtgtracker.web.auth import DEV_COOKIE, AccessVerifier, AuthConfig
+from mtgtracker.web.deps import require_person
 from mtgtracker.web.routes import decks, exports, modify, pages, people, printings
 
 WEB_DIR = Path(__file__).parent
@@ -135,16 +137,30 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
     app.state.auth = auth
     app.state.verifier = AccessVerifier(auth, jwks_client) if auth.mode == "cloudflare" else None
     app.state.templates = templates
+    # Signs the confirm tokens system actors need for risky actions
+    # (mtgtracker/confirm.py). Random per start unless MTG_CONFIRM_SECRET is set.
+    secret = os.environ.get("MTG_CONFIRM_SECRET", "")
+    if secret and len(secret) < 16:
+        raise ValueError("MTG_CONFIRM_SECRET must be at least 16 characters")
+    app.state.confirm_secret = secret.encode() or secrets.token_bytes(32)
     app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
 
     middleware.install(app)
+
+    @app.exception_handler(confirm.ConfirmRequired)
+    def confirm_required(request: Request, exc: confirm.ConfirmRequired):
+        return JSONResponse(
+            {"error": {"code": exc.code, "message": exc.message}, "preview": exc.preview,
+             "confirm": exc.token},
+            status_code=409,
+        )
 
     @app.get("/healthz", response_class=PlainTextResponse)
     def healthz():
         return "ok"
 
     if auth.mode == "dev":
-        @app.get("/dev/as/{user_id}")
+        @app.get("/dev/as/{user_id}", dependencies=[Depends(require_person)])
         def dev_as(user_id: int):
             """Local multi-user testing only: act as another user."""
             response = RedirectResponse("/", status_code=303)

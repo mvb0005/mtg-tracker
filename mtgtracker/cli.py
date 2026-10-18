@@ -52,6 +52,79 @@ def add_user(
     typer.echo(f"Added user {user.id}: {user.display_name}" + (f" <{user.email}>" if user.email else ""))
 
 
+@app.command("add-system-user")
+def add_system_user(
+    name: str = typer.Argument(..., help="Display name, e.g. Claude"),
+    db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db", help="SQLite database path"),
+):
+    """Add a system user (an automated actor with no email that acts for people)."""
+    conn = _connect(db_path)
+    try:
+        user = users.create_system(conn, name)
+    except users.UserError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"Added system user {user.id}: {user.display_name}")
+
+
+@app.command("add-credential")
+def add_credential(
+    user_id: int = typer.Argument(..., help="System user id"),
+    cf_client_id: str = typer.Option(
+        ..., "--cf-client-id", help="Cloudflare Access service token Client ID (not the secret)"
+    ),
+    label: str = typer.Option(..., "--label", help="What this credential is for"),
+    db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db", help="SQLite database path"),
+):
+    """Let a Cloudflare Access service token act as a system user."""
+    conn = _connect(db_path)
+    try:
+        cred = users.add_credential(conn, user_id, cf_client_id, label)
+    except users.UserError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"Added credential {cred.id} ({cred.label}) for user {cred.user_id}")
+
+
+@app.command("revoke-credential")
+def revoke_credential(
+    credential_id: int = typer.Argument(..., help="Credential id (see list-credentials)"),
+    db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db", help="SQLite database path"),
+):
+    """Revoke a service credential."""
+    conn = _connect(db_path)
+    try:
+        users.revoke_credential(conn, credential_id)
+    except users.UserError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"Revoked credential {credential_id}")
+
+
+@app.command("list-credentials")
+def list_credentials(
+    db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db", help="SQLite database path"),
+):
+    """List service credentials (Client IDs are identifiers, not secrets)."""
+    conn = _connect(db_path)
+    for c in users.list_credentials(conn):
+        state = f"revoked {c.revoked_at[:10]}" if c.revoked_at else "active"
+        used = c.last_used_at or "never"
+        typer.echo(f"{c.id}\tuser {c.user_id}\t{c.cf_client_id}\t{c.label}\t{state}\tlast used {used}")
+
+
+@app.command("disable-user")
+def disable_user(
+    user: str = typer.Argument(..., help="Email or id"),
+    enable: bool = typer.Option(False, "--enable", help="Turn access back on"),
+    db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db", help="SQLite database path"),
+):
+    """Turn a user's access off (or back on); the owner can't be disabled."""
+    conn = _connect(db_path)
+    try:
+        changed = users.set_disabled(conn, _user_id(conn, user), not enable)
+    except users.UserError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"{changed.display_name} is now {'enabled' if enable else 'disabled'}")
+
+
 @app.command("rename-user")
 def rename_user(
     user: str = typer.Argument(..., help="Email or id"),

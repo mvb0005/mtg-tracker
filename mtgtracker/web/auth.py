@@ -11,6 +11,15 @@
   claims user 1 on first sign-in). Requests from loopback act as user 1:
   only `kubectl port-forward` reaches the pod that way (cloudflared runs in
   its own pod, and uvicorn ignores X-Forwarded-For).
+
+Every request has a principal (whose things it touches; request.state.user,
+which all owner guards key on) and an actor (who is really asking;
+request.state.actor). For a person they are the same. A system user (an
+automated actor, authenticated by a Cloudflare Access service token whose
+Client ID is a registered credential) must say who it acts for with
+X-Act-For; the principal is then that person. A person sending X-Act-For is
+refused. In dev mode, `X-Dev-Service: <client id>` stands in for the service
+token so this can be tried locally; no other mode reads it.
 """
 
 from __future__ import annotations
@@ -26,10 +35,27 @@ from mtgtracker.users import OWNER_ID, User
 
 LOOPBACK = {"127.0.0.1", "::1"}
 DEV_COOKIE = "mtg_dev_user"
+DEV_SERVICE_HEADER = "x-dev-service"
+ACT_FOR_HEADER = "x-act-for"
 
 
 class NotSignedIn(Exception):
     """No acceptable identity on the request."""
+
+
+class ActForError(Exception):
+    """X-Act-For is missing, malformed, or names someone the actor can't act for."""
+
+    def __init__(self, status: int, code: str, message: str, *, as_json: bool):
+        super().__init__(message)
+        self.status, self.code, self.message, self.as_json = status, code, message, as_json
+
+
+@dataclass(frozen=True)
+class AccessIdentity:
+    """What a verified Access token says. Exactly one of the two is set."""
+    email: str | None = None  # a person
+    common_name: str | None = None  # a service token's Client ID
 
 
 @dataclass(frozen=True)
@@ -66,7 +92,10 @@ class AccessVerifier:
             f"{self.issuer}/cdn-cgi/access/certs", cache_keys=True, lifespan=3600
         )
 
-    def email(self, token: str) -> str:
+    def verify(self, token: str) -> AccessIdentity:
+        """Check the token (RS256 signature, aud, iss, exp) and say who it
+        is: an email for a person, or the `common_name` (the Client ID) for
+        a service token, whose JWT has no email and an empty sub."""
         try:
             key = self.jwks.get_signing_key_from_jwt(token).key
             claims = jwt.decode(
@@ -75,32 +104,84 @@ class AccessVerifier:
             )
         except jwt.PyJWTError as exc:
             raise NotSignedIn(f"invalid Access token: {exc}") from exc
-        email = claims.get("email")
-        if not email:
-            raise NotSignedIn("Access token has no email")
-        return email
+        email, common_name = claims.get("email"), claims.get("common_name")
+        # Email wins: a token that names a person is that person, so a
+        # common_name riding along can never turn a person into (or let them
+        # borrow) a service identity, nor the reverse.
+        if isinstance(email, str) and email.strip():
+            return AccessIdentity(email=email.strip())
+        if isinstance(common_name, str) and common_name.strip():
+            return AccessIdentity(common_name=common_name.strip())
+        raise NotSignedIn("Access token has neither an email nor a service token")
 
 
-def resolve(conn: sqlite3.Connection, config: AuthConfig, verifier: AccessVerifier | None,
-            *, client_host: str | None, headers, cookies) -> User:
-    """The user for a request, or NotSignedIn."""
-    if config.mode == "single":
-        return users.get(conn, OWNER_ID)
-    if config.mode == "dev":
-        raw = cookies.get(DEV_COOKIE, "")
-        user = users.get(conn, int(raw)) if raw.isdigit() else None
-        return user or users.get(conn, OWNER_ID)
-    # cloudflare
-    if client_host in LOOPBACK:
-        return users.get(conn, OWNER_ID)
-    token = headers.get("cf-access-jwt-assertion") or cookies.get("CF_Authorization")
-    if not token:
-        raise NotSignedIn("sign in through mtg.example.com")
-    email = verifier.email(token)
+def _person(conn: sqlite3.Connection, config: AuthConfig, email: str) -> User:
     user = users.by_email(conn, email)
     if user is None and config.owner_email and email.casefold() == config.owner_email.casefold():
         user = users.claim_owner(conn, email)
     if user is None:
         raise NotSignedIn(f"{email} isn't a user here yet; ask the owner to add you")
+    if user.disabled:
+        raise NotSignedIn(f"{user.display_name}'s access has been turned off")
     users.touch(conn, user.id)
     return user
+
+
+def _service(conn: sqlite3.Connection, client_id: str) -> User:
+    user = users.credential_user(conn, client_id)
+    if user is None:
+        raise NotSignedIn("unknown, revoked or disabled service credential")
+    return user
+
+
+def _principal_for(conn: sqlite3.Connection, actor: User, act_for: str | None) -> User:
+    """Who the request acts for: the actor itself for a person; the
+    X-Act-For user for a system actor (carte blanche over any enabled
+    person -- the owner guards then apply to that person)."""
+    if actor.kind != "system":
+        if act_for is not None:
+            raise ActForError(403, "forbidden", "X-Act-For is for system users", as_json=False)
+        return actor
+    if act_for is None:
+        raise ActForError(
+            400, "act_for_required", "system requests must say who they act for (X-Act-For)", as_json=True
+        )
+    valid = act_for.isascii() and act_for.isdecimal() and len(act_for) <= 12  # no overflowing ids
+    target = users.get(conn, int(act_for)) if valid else None
+    if target is None:
+        raise ActForError(400, "bad_act_for", "X-Act-For must be the id of an existing user", as_json=True)
+    if target.kind != "person":
+        raise ActForError(403, "forbidden", "a system user can't act for another system user", as_json=True)
+    if target.disabled:
+        raise ActForError(403, "forbidden", f"{target.display_name} is disabled", as_json=True)
+    return target
+
+
+def resolve(conn: sqlite3.Connection, config: AuthConfig, verifier: AccessVerifier | None,
+            *, client_host: str | None, headers, cookies) -> tuple[User, User]:
+    """(principal, actor) for a request, or raise NotSignedIn / ActForError."""
+    actor: User | None = None
+    if config.mode == "dev" and headers.get(DEV_SERVICE_HEADER) is not None:
+        actor = _service(conn, headers.get(DEV_SERVICE_HEADER).strip())
+    elif config.mode == "single":
+        actor = users.get(conn, OWNER_ID)
+    elif config.mode == "dev":
+        raw = cookies.get(DEV_COOKIE, "")
+        user = users.get(conn, int(raw)) if raw.isdigit() else None
+        if user is None or user.kind != "person":
+            user = users.get(conn, OWNER_ID)
+        actor = user
+    elif client_host in LOOPBACK:  # cloudflare
+        actor = users.get(conn, OWNER_ID)
+    else:
+        token = headers.get("cf-access-jwt-assertion") or cookies.get("CF_Authorization")
+        if not token:
+            raise NotSignedIn("sign in through mtg.example.com")
+        identity = verifier.verify(token)
+        if identity.email:
+            actor = _person(conn, config, identity.email)
+        else:
+            actor = _service(conn, identity.common_name)
+    if actor.disabled:
+        raise NotSignedIn(f"{actor.display_name}'s access has been turned off")
+    return _principal_for(conn, actor, headers.get(ACT_FOR_HEADER)), actor
