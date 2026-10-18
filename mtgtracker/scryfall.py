@@ -91,24 +91,89 @@ def _satisfies(card: dict, ident: dict) -> bool:
     if "set" in ident:
         return card["set"] == ident["set"] and card["collector_number"] == ident["collector_number"]
     wanted = _normalize(ident["name"])
-    names = {_normalize(card["name"])} | {_normalize(f["name"]) for f in card.get("card_faces") or []}
-    return wanted in names
+    return wanted in _names(card)
+
+
+# Pause between per-card fallback requests, and the 429 back-off schedule.
+# Both go through _pause so tests can patch it out.
+FALLBACK_PAUSE = 0.3
+RETRY_DELAYS = (1, 2, 4)
+
+
+def _pause(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def _names(card: dict) -> set[str]:
+    return {_normalize(card["name"])} | {_normalize(f["name"]) for f in card.get("card_faces") or []}
+
+
+def _fetch_one(client: httpx.Client, ident: dict, headers: dict) -> dict | None:
+    """One card by identifier via the per-card endpoints. None for a 404; a
+    429 is retried after RETRY_DELAYS, then raised like any other HTTP error."""
+    if "id" in ident:
+        url, params = f"https://api.scryfall.com/cards/{ident['id']}", None
+    elif "set" in ident:
+        url, params = f"https://api.scryfall.com/cards/{ident['set']}/{ident['collector_number']}", None
+    else:
+        url, params = "https://api.scryfall.com/cards/named", {"fuzzy": ident["name"]}
+    for delay in (*RETRY_DELAYS, None):
+        resp = client.get(url, params=params, headers=headers)
+        if resp.status_code != 429 or delay is None:
+            break
+        _pause(delay)
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _fetch_each(
+    client: httpx.Client, idents: list[dict], headers: dict, original: Exception,
+) -> list[dict | None]:
+    """Fallback for a batch the collection endpoint failed: one GET per
+    identifier, in order. If Scryfall can't be reached at all, raises
+    `original` (the batch's own failure) rather than a per-card error."""
+    out: list[dict | None] = []
+    reached = False
+    for n, ident in enumerate(idents):
+        if n:
+            _pause(FALLBACK_PAUSE)
+        try:
+            card = _fetch_one(client, ident, headers)
+        except httpx.TransportError:
+            if not reached:
+                raise original from None
+            raise
+        reached = True
+        if card is not None:
+            _cache_single(card)
+        out.append(card)
+    return out
 
 
 def fetch_collection(identifiers: list[dict]) -> list[dict | None]:
     """Resolve many cards at once via POST /cards/collection (75 per
     request, a short pause between batches, per Scryfall's guidelines).
     Each identifier is {"id": <scryfall id>}, {"set": ..., "collector_number":
-    ...} or {"name": ...}. Exact identifiers (id, set + number) already in the
-    cache are answered from it; only the rest go to Scryfall. Returns one card
-    (or None if not found) per identifier, in order, and caches every card
-    found like fetch_named_card does. An explicit user action only (e.g.
-    importing a list) -- never called on page load."""
+    ...} or {"name": ...}. Anything already in the cache is answered from it
+    (a name matches the first cached printing, any one will do); only the rest
+    go to Scryfall. If the collection POST times out, fails to connect or
+    returns a 5xx, that batch is resolved one card at a time instead (GET
+    /cards/{id}, /cards/{set}/{number}, /cards/named?fuzzy=), pausing between
+    requests and backing off on 429; if Scryfall can't be reached at all, the
+    POST's own exception is raised. Returns one card (or None if not found)
+    per identifier, in order, and caches every card found like
+    fetch_named_card does. An explicit user action only (e.g. importing a
+    list) -- never called on page load."""
     by_id: dict[str, dict] = {}
     by_number: dict[tuple[str, str], dict] = {}
+    by_name: dict[str, dict] = {}
     for card in cached_cards():
         by_id[card["id"]] = card
         by_number[(card["set"], card["collector_number"])] = card
+        for name in _names(card):
+            by_name.setdefault(name, card)
     results: list[dict | None] = []
     missing: list[int] = []
     for i, ident in enumerate(identifiers):
@@ -117,18 +182,28 @@ def fetch_collection(identifiers: list[dict]) -> list[dict | None]:
         elif "set" in ident:
             results.append(by_number.get((ident["set"], ident["collector_number"])))
         else:
-            results.append(None)
+            results.append(by_name.get(_normalize(ident["name"])))
         if results[-1] is None:
             missing.append(i)
 
+    if not missing:
+        return results
     headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     with httpx.Client(timeout=30) as client:
         for start in range(0, len(missing), 75):
             if start:
                 time.sleep(0.1)
             batch = missing[start:start + 75]
-            resp = client.post("https://api.scryfall.com/cards/collection",
-                               json={"identifiers": [identifiers[i] for i in batch]}, headers=headers)
+            idents = [identifiers[i] for i in batch]
+            try:
+                resp = client.post("https://api.scryfall.com/cards/collection",
+                                   json={"identifiers": idents}, headers=headers)
+                if resp.status_code >= 500:
+                    resp.raise_for_status()
+            except (httpx.TransportError, httpx.HTTPStatusError) as e:
+                for i, card in zip(batch, _fetch_each(client, idents, headers, e), strict=True):
+                    results[i] = card
+                continue
             resp.raise_for_status()
             found = resp.json().get("data", [])
             for card in found:

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run mtgtracker on minikube. See README "Running on minikube".
 #
+#   deploy/minikube.sh start              bring the cluster back after a reboot (needs Docker running); no rebuild or redeploy
 #   deploy/minikube.sh up                 build the image into minikube, apply manifests, wait
 #   deploy/minikube.sh load-db [DB]       copy a local DB (default data/mtgtracker.db) + receipts/ into the pod
 #   deploy/minikube.sh pull-db [DB]       copy the pod's DB back to a local file (old one kept as a backup)
@@ -17,7 +18,13 @@ cd "$(dirname "$0")/.."
 NS=mtgtracker
 IMAGE=mtgtracker:dev
 DATA=/data
-KUBECTL=(kubectl --namespace "$NS")
+# kubectl if installed, else minikube's bundled one (WSL often has only minikube).
+if command -v kubectl >/dev/null 2>&1; then
+  KUBECTL_BASE=(kubectl)
+else
+  KUBECTL_BASE=(minikube kubectl --)
+fi
+KUBECTL=("${KUBECTL_BASE[@]}" --namespace "$NS")
 
 # Value of KEY from the repo's .env (gitignored). The file is parsed, never
 # sourced/executed: optional "export", surrounding quotes and whitespace are
@@ -75,11 +82,24 @@ apply_auth_config() {
 cmd_up() {
   minikube status >/dev/null 2>&1 || minikube start
   minikube image build -t "$IMAGE" .
-  kubectl apply -k deploy/k8s
+  "${KUBECTL_BASE[@]}" apply -k deploy/k8s
   apply_auth_config
   # Pick up a rebuilt image under the same tag.
   "${KUBECTL[@]}" rollout restart deployment/mtgtracker
   "${KUBECTL[@]}" rollout status deployment/mtgtracker --timeout=120s
+}
+
+# Bring an existing cluster back after a reboot. Builds nothing, applies
+# nothing, restarts nothing: the pods come back from the saved cluster state.
+cmd_start() {
+  if ! docker version >/dev/null 2>&1; then
+    echo "Docker isn't running. Start Docker Desktop, wait until it says it's running, then retry." >&2
+    echo "From WSL: cmd.exe /c start \"\" \"C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe\"" >&2
+    exit 1
+  fi
+  minikube start
+  "${KUBECTL[@]}" wait --for=condition=Ready pod --all --timeout=180s
+  "${KUBECTL[@]}" get pods
 }
 
 cmd_load_db() {
@@ -185,9 +205,9 @@ cmd_tunnel() {
   printf '%s' "$token" \
     | "${KUBECTL[@]}" create secret generic cloudflared-token --from-file=token=/dev/stdin \
       --dry-run=client -o yaml \
-    | kubectl apply -f -
+    | "${KUBECTL_BASE[@]}" apply -f -
   unset token
-  kubectl apply -k deploy/k8s/tunnel
+  "${KUBECTL_BASE[@]}" apply -k deploy/k8s/tunnel
   # Pick up a changed token.
   "${KUBECTL[@]}" rollout restart deployment/cloudflared
   "${KUBECTL[@]}" rollout status deployment/cloudflared --timeout=120s
@@ -195,7 +215,7 @@ cmd_tunnel() {
 }
 
 cmd_tunnel_down() {
-  kubectl delete -k deploy/k8s/tunnel --ignore-not-found
+  "${KUBECTL_BASE[@]}" delete -k deploy/k8s/tunnel --ignore-not-found
   "${KUBECTL[@]}" delete secret cloudflared-token --ignore-not-found
 }
 
@@ -204,10 +224,11 @@ cmd_down() {
 }
 
 cmd_destroy() {
-  kubectl delete -k deploy/k8s --ignore-not-found
+  "${KUBECTL_BASE[@]}" delete -k deploy/k8s --ignore-not-found
 }
 
 case ${1:-} in
+  start) cmd_start ;;
   up) cmd_up ;;
   load-db) shift; cmd_load_db "$@" ;;
   pull-db) shift; cmd_pull_db "$@" ;;
@@ -217,5 +238,5 @@ case ${1:-} in
   tunnel-down) cmd_tunnel_down ;;
   down) cmd_down ;;
   destroy) cmd_destroy ;;
-  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

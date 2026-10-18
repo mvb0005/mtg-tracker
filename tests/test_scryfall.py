@@ -240,3 +240,113 @@ def test_error_on_later_page_does_not_write_partial_cache(isolated_cache, mock_s
 
     assert len(requests) == 2
     assert not (isolated_cache / "tst.json").exists()
+
+
+# --- fetch_collection: cache-first names and the per-card fallback ---------
+
+def _cache(*cards):
+    for card in cards:
+        scryfall._cache_single(card)
+
+
+@pytest.fixture
+def pauses(monkeypatch):
+    waited: list[float] = []
+    monkeypatch.setattr(scryfall, "_pause", waited.append)
+    return waited
+
+
+def _collection_down(per_card, post=lambda r: (_ for _ in ()).throw(httpx.ReadTimeout("hung", request=r))):
+    """Handler: POST /cards/collection goes through `post`, GETs through `per_card`."""
+    def handler(request):
+        if request.method == "POST":
+            return post(request)
+        return per_card(request)
+    return handler
+
+
+def _by_fuzzy(request):
+    name = request.url.params["fuzzy"]
+    if name == "Missing":
+        return httpx.Response(404, json={"object": "error", "type": "not_found"})
+    return httpx.Response(200, json=_card(name, name.lower()))
+
+
+def test_name_in_cache_makes_no_request(isolated_cache, no_network):
+    _cache(_card("Sol Ring", 1), _card("Sol Ring", 2, set_code="oth"))
+    got = scryfall.fetch_collection([{"name": "sol ring"}])
+    assert got[0] is scryfall.cached_cards()[0]  # the first match, deterministic
+
+
+def test_name_matches_a_face_in_cache(isolated_cache, no_network):
+    card = _card("Delver of Secrets // Insectile Aberration", 3)
+    card["card_faces"] = [{"name": "Delver of Secrets"}, {"name": "Insectile Aberration"}]
+    _cache(card)
+    assert scryfall.fetch_collection([{"name": "Delver of Secrets"}]) == [card]
+
+
+def test_post_timeout_falls_back_to_per_card_gets(isolated_cache, mock_scryfall, pauses):
+    set_handler, requests = mock_scryfall
+    set_handler(_collection_down(lambda r: (
+        httpx.Response(200, json=_card("By Id", 7)) if r.url.path == "/cards/id-tst-7"
+        else httpx.Response(200, json=_card("By Number", 9)) if r.url.path == "/cards/xyz/9"
+        else _by_fuzzy(r)
+    )))
+    idents = [{"name": "Alpha"}, {"id": "id-tst-7"}, {"set": "xyz", "collector_number": "9"}]
+    got = scryfall.fetch_collection(idents)
+    assert [c["name"] for c in got] == ["Alpha", "By Id", "By Number"]
+    assert [r.method for r in requests] == ["POST", "GET", "GET", "GET"]
+    assert pauses == [scryfall.FALLBACK_PAUSE] * 2
+    # cached, so asking again needs no network at all
+    assert len(list((isolated_cache / "cards").glob("*.json"))) == 3
+    assert len(requests) == 4
+    scryfall.fetch_collection([{"name": "Alpha"}])
+    assert len(requests) == 4
+
+
+def test_post_5xx_falls_back_too(isolated_cache, mock_scryfall, pauses):
+    set_handler, _ = mock_scryfall
+    set_handler(_collection_down(_by_fuzzy, post=lambda r: httpx.Response(503)))
+    got = scryfall.fetch_collection([{"name": "One"}, {"name": "Two"}])
+    assert [c["name"] for c in got] == ["One", "Two"]
+
+
+def test_fallback_404_is_none_in_that_slot(isolated_cache, mock_scryfall, pauses):
+    set_handler, _ = mock_scryfall
+    set_handler(_collection_down(_by_fuzzy))
+    got = scryfall.fetch_collection([{"name": "One"}, {"name": "Missing"}, {"name": "Three"}])
+    assert [c and c["name"] for c in got] == ["One", None, "Three"]
+
+
+def test_fallback_retries_429(isolated_cache, mock_scryfall, pauses):
+    set_handler, _ = mock_scryfall
+    calls = {"n": 0}
+
+    def per_card(request):
+        calls["n"] += 1
+        return httpx.Response(429) if calls["n"] <= 2 else _by_fuzzy(request)
+
+    set_handler(_collection_down(per_card))
+    got = scryfall.fetch_collection([{"name": "One"}])
+    assert got[0]["name"] == "One"
+    assert pauses == [1, 2]
+
+
+def test_fallback_gives_up_on_persistent_429(isolated_cache, mock_scryfall, pauses):
+    set_handler, _ = mock_scryfall
+    set_handler(_collection_down(lambda r: httpx.Response(429)))
+    with pytest.raises(httpx.HTTPStatusError):
+        scryfall.fetch_collection([{"name": "One"}])
+    assert pauses == [1, 2, 4]
+
+
+def test_unreachable_scryfall_raises_the_original_error(isolated_cache, mock_scryfall, pauses):
+    set_handler, requests = mock_scryfall
+
+    def down(request):
+        raise httpx.ConnectTimeout(f"{request.method} down", request=request)
+
+    set_handler(down)
+    with pytest.raises(httpx.ConnectTimeout, match="POST down"):
+        scryfall.fetch_collection([{"name": "One"}, {"name": "Two"}])
+    assert len(requests) == 2  # the POST, then one failed GET, no 30s timeout per card

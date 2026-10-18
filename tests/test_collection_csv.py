@@ -193,7 +193,7 @@ def test_scryfall_outage_writes_nothing(db_path, cache_dir, monkeypatch):
     conn = db.connect(db_path)
     before = conn.execute("SELECT COUNT(*) FROM lots").fetchone()[0]
     with pytest.raises(httpx.HTTPStatusError):
-        import_collection(conn, b"Name\nSol Ring\n", owner_id=1, imported_by=1)
+        import_collection(conn, b"Name\nNot In Cache\n", owner_id=1, imported_by=1)
     assert conn.execute("SELECT COUNT(*) FROM lots").fetchone()[0] == before
     assert conn.execute("SELECT COUNT(*) FROM collection_imports").fetchone()[0] == 0
     conn.close()

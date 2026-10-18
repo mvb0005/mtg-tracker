@@ -23,6 +23,7 @@ mtg serve                              # web UI at http://127.0.0.1:8000
 ## Running on minikube
 
 ```
+deploy/minikube.sh start               # bring the cluster back after a reboot (Docker must be running); no redeploy
 deploy/minikube.sh up                  # build image into minikube, apply deploy/k8s, wait
 deploy/minikube.sh load-db             # snapshot data/mtgtracker.db (+ receipts/) into the pod's volume
 deploy/minikube.sh pull-db             # copy the cluster DB back to data/mtgtracker.db (old one backed up)

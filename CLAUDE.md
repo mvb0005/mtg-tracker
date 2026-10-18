@@ -22,7 +22,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # setup
 .venv/bin/mtg add-user NAME [--email E] [--admin]            # users exist only if added (sign-in allowlist)
 .venv/bin/mtg rename-user 1 "Pat"                            # user 1 starts as "Owner"; import-order takes --user EMAIL|ID
 python scripts/scrub_order.py <in.order> <out.order>         # make a real .order safe to commit as a fixture
-deploy/minikube.sh up | load-db | pull-db | import FILE.order | forward [PORT] | down | destroy   # minikube (see below); forward reconnects across redeploys
+deploy/minikube.sh start | up | load-db | pull-db | import FILE.order | forward [PORT] | down | destroy   # minikube (see below); forward reconnects across redeploys
 ```
 
 The CLI defaults to `data/mtgtracker.db` and `receipts/`, and every command runs migrations on connect. Linting is ruff, configured in `pyproject.toml`. `ruff format` is intentionally not enforced. `B008` is suppressed for `typer.Option`/`Argument` and `fastapi.Depends` via `extend-immutable-calls`.
@@ -171,7 +171,7 @@ Each bucket carries a CSS `fill` (`_fill`), which templates use as inline `backg
 
 **Test fixtures** (`tests/conftest.py`): `db_path` is a copy of a session-scoped, seeded, file-backed DB. Seeding it fresh per test would take seconds on WSL because of per-card commits. `cache_dir` patches `scryfall.CACHE_DIR` to a temp copy of the fdc fixture, and makes any httpx request fail. Use `install_transport(monkeypatch, httpx.MockTransport(...))` to fake a Scryfall fetch. Web tests must use `cache_dir`, or requests would read the real gitignored cache.
 
-**Scryfall:** `scryfall.py` fetches one whole set through the search API and caches it in `.scryfall_cache/<set>.json`, which is gitignored. It never makes per-card calls. Tests must stay network-free: `test_precon_decklist.py` monkeypatches `scryfall.CACHE_DIR` to a temp dir seeded from `tests/fixtures/scryfall_fdc.json`.
+**Scryfall:** `scryfall.py` fetches one whole set through the search API and caches it in `.scryfall_cache/<set>.json`, which is gitignored. Set fetches never make per-card calls. `fetch_collection` answers ids, set + number and names from the cache first; if the collection POST times out, fails to connect or returns 5xx, it resolves that batch with per-card GETs (0.3s apart, 429 back-off, 404 = not found) and raises the POST's own error only if Scryfall is unreachable. Tests must stay network-free: `test_precon_decklist.py` monkeypatches `scryfall.CACHE_DIR` to a temp dir seeded from `tests/fixtures/scryfall_fdc.json`.
 
 **Seed decklists** (`seed/precon_decklists/*.json`) have the keys `deck_name`, `product_display_name` (must exactly match the cleaned product title), `format`, `commander`, `set_code`, `cards` (unique non-basic names), and `basics` (name → count). `cards` plus the `basics` counts must total 100. A test enforces this.
 
@@ -185,6 +185,7 @@ Each bucket carries a CSS `fill` (`_fill`), which templates use as inline `backg
 ## minikube
 
 `Dockerfile` plus `deploy/k8s/` (kustomize), driven by `deploy/minikube.sh`.
+- **kubectl:** the script uses `kubectl` if installed, else `minikube kubectl --` (WSL often has only minikube). `start` brings an existing cluster back after a reboot (needs Docker running; it builds, applies and restarts nothing).
 - **Image:** `pip install -e .` at `/app` on purpose. `SEED_DIR` and `scryfall.CACHE_DIR` resolve relative to the source tree, so a site-packages install would break seeding. The image is non-root, with a read-only root filesystem.
 - **Storage:** one PVC at `/data` holds the DB, the receipts, and the Scryfall cache (mounted into `/app/.scryfall_cache` via `subPath`).
 - **Deployment:** `replicas: 1`, with a zero-downtime `RollingUpdate` (`maxSurge: 1`, `maxUnavailable: 0`, readiness on `/healthz`, and a 5s `preStop` sleep so the old pod drains before it stops).
