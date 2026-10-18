@@ -17,7 +17,7 @@
       {% for href, label, key in nav %}
         <a href="{{ href }}"{% if active == key %} aria-current="page"{% endif %}>{{ label }}</a>
       {% endfor %}
-      {% if user %}<span class="whoami" title="{{ user.email or 'Signed in' }}">{{ user.display_name }}</span>{% endif %}
+      {% if user %}<a class="whoami" href="/profile" title="{{ user.email or 'Signed in' }}">{{ user.display_name }}</a>{% endif %}
     </nav>
   </header>
   <div class="page">

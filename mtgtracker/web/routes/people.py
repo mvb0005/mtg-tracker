@@ -51,6 +51,65 @@ def people(
                   system_users=system)
 
 
+@router.get("/profile", response_class=HTMLResponse)
+def profile(
+    request: Request, notice: str = "", error: str = "", conn: sqlite3.Connection = Depends(get_conn)
+):
+    """The signed-in person's own profile: edit the display name; the rest is read-only."""
+    return render(request, "profile.html", person=users.get(conn, me(request).id),
+                  notice=notice, error=error)
+
+
+@router.post("/profile")
+async def profile_save(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    form = await request.form()
+    try:
+        notice, summary = people_service.rename_person(conn, me(request), str(form.get("display_name", "")))
+    except ServiceError as exc:
+        return redirect("/profile", error=str(exc))
+    request.state.audit_notice = summary
+    return redirect("/profile", notice=notice)
+
+
+def _editable_person(request: Request, conn: sqlite3.Connection, person_id: int) -> users.User:
+    """Admin editing: like adding people, a signed-in admin person in dev or
+    cloudflare mode (never a system actor); the target is a person."""
+    if not may_manage_system(request):
+        raise HTTPException(status_code=403, detail="Only a signed-in admin can edit people")
+    person = users.get(conn, person_id)
+    if person is None:
+        raise HTTPException(status_code=404, detail="No such person")
+    if person.kind != "person":
+        raise HTTPException(status_code=403, detail="System users can't be edited here")
+    return person
+
+
+@router.get("/people/{person_id}/edit", response_class=HTMLResponse, dependencies=[Depends(require_person)])
+def person_edit(
+    person_id: int, request: Request, notice: str = "", error: str = "",
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    person = _editable_person(request, conn, person_id)
+    return render(request, "person_edit.html", person=person, is_self=person.id == me(request).id,
+                  notice=notice, error=error)
+
+
+@router.post("/people/{person_id}/edit", dependencies=[Depends(require_person)])
+async def person_edit_save(person_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    person = _editable_person(request, conn, person_id)
+    form = await request.form()
+    back = f"/people/{person.id}/edit"
+    try:
+        notice, summary = people_service.edit_person(
+            conn, deps.actor(request), person.id, str(form.get("display_name", "")),
+            str(form.get("email", "")), confirm_email=bool(form.get("confirm_email")),
+        )
+    except ServiceError as exc:
+        return redirect(back, error=str(exc))
+    request.state.audit_notice = summary
+    return redirect(back, notice=notice)
+
+
 @router.post("/people")
 @risky
 async def people_add(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
@@ -126,6 +185,7 @@ def person_page(
         request, "person.html", person=person, decks=queries.list_decks(conn, person.id),
         card_count=queries.count_cards(conn, person.id), can_import=can_import, imports=imports,
         notice=notice, error=error, activity=activity,
+        can_edit_person=may_manage_system(request) and deps.actor(request).kind == "person",
     )
 
 

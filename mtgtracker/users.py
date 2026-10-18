@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 
 OWNER_ID = 1
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+MAX_NAME = 60
 
 
 class UserError(ValueError):
@@ -36,6 +37,7 @@ class User:
     signed_in: bool = False  # has ever signed in (last_seen_at set)
     kind: str = "person"  # 'person' or 'system'
     disabled: bool = False
+    created_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -54,7 +56,7 @@ def _user(row: sqlite3.Row | None) -> User | None:
         return None
     return User(id=row["id"], email=row["email"], display_name=row["display_name"],
                 is_admin=bool(row["is_admin"]), signed_in=row["last_seen_at"] is not None,
-                kind=row["kind"], disabled=row["disabled_at"] is not None)
+                kind=row["kind"], disabled=row["disabled_at"] is not None, created_at=row["created_at"])
 
 
 def get(conn: sqlite3.Connection, user_id: int) -> User | None:
@@ -73,17 +75,31 @@ def list_users(conn: sqlite3.Connection, kind: str = "person") -> list[User]:
     return [_user(r) for r in conn.execute("SELECT * FROM users WHERE kind = ? ORDER BY id", (kind,))]
 
 
+def clean_name(display_name: str) -> str:
+    """A display name: trimmed, 1 to MAX_NAME characters."""
+    display_name = " ".join(display_name.split())
+    if not display_name:
+        raise UserError("give them a name")
+    if len(display_name) > MAX_NAME:
+        raise UserError(f"names are {MAX_NAME} characters at most")
+    return display_name
+
+
+def clean_email(email: str) -> str:
+    email = email.strip()
+    if not _EMAIL_RE.match(email):
+        raise UserError(f"'{email}' doesn't look like an email address")
+    return email
+
+
 def create(
     conn: sqlite3.Connection, display_name: str, email: str | None = None, *, is_admin: bool = False,
     commit: bool = True,
 ) -> User:
-    display_name = display_name.strip()
+    display_name = clean_name(display_name)
     email = (email or "").strip() or None
-    if not display_name:
-        raise UserError("give them a name")
     if email is not None:
-        if not _EMAIL_RE.match(email):
-            raise UserError(f"'{email}' doesn't look like an email address")
+        email = clean_email(email)
         if by_email(conn, email):
             raise UserError(f"{email} is already a user")
     cur = conn.execute(
@@ -95,14 +111,32 @@ def create(
     return get(conn, cur.lastrowid)
 
 
-def rename(conn: sqlite3.Connection, user_id: int, display_name: str) -> User:
-    display_name = display_name.strip()
-    if not display_name:
-        raise UserError("give them a name")
+def rename(conn: sqlite3.Connection, user_id: int, display_name: str, *, commit: bool = True) -> User:
+    display_name = clean_name(display_name)
     if get(conn, user_id) is None:
         raise UserError(f"no user {user_id}")
     conn.execute("UPDATE users SET display_name = ? WHERE id = ?", (display_name, user_id))
-    conn.commit()
+    if commit:
+        conn.commit()
+    return get(conn, user_id)
+
+
+def set_email(conn: sqlite3.Connection, user_id: int, email: str, *, commit: bool = True) -> User:
+    """Change a person's sign-in email -- which changes who can sign in as
+    them. Callers decide who may (an admin, never for themselves on the web).
+    Unique case-insensitively; never for a system user."""
+    user = get(conn, user_id)
+    if user is None:
+        raise UserError(f"no user {user_id}")
+    if user.kind != "person":
+        raise UserError("a system user has no email")
+    email = clean_email(email)
+    other = by_email(conn, email)
+    if other is not None and other.id != user_id:
+        raise UserError(f"{email} is already a user")
+    conn.execute("UPDATE users SET email = ? WHERE id = ?", (email, user_id))
+    if commit:
+        conn.commit()
     return get(conn, user_id)
 
 
