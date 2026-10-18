@@ -135,6 +135,7 @@ Each bucket carries a CSS `fill` (`_fill`), which templates use as inline `backg
 - **Auth mode** comes from `MTG_AUTH`: `single` (default; everyone is user 1, as before), `dev` (local only; `/dev/as/{id}` sets a cookie), or `cloudflare`.
   - In `cloudflare` mode, the Access JWT (header or `CF_Authorization` cookie) is verified with RS256 against the team's keys, checking `aud` (`CF_ACCESS_AUD`), `iss` (`https://CF_ACCESS_TEAM_DOMAIN`) and `exp`.
   - Its email must match an existing user: an allowlist, never auto-created. `MTG_OWNER_EMAIL` claims user 1 on its first sign-in.
+  - The app is the only allowlist. The Access application's Allow policy is "Everyone" (one-time-PIN verified email), plus a Service Auth policy for the `claude-mtgtracker` service token. So adding someone at `/people` is enough to let them in, and a verified stranger gets the 401 "ask the owner to add you" page before any data.
   - Loopback clients act as user 1 so port-forward works. That's only safe because uvicorn runs with `proxy_headers=False` and cloudflared runs in its own pod.
   - Anything else gets the 401 `signed_out.html`. `/static/` and `/healthz` (the k8s probes) need no identity.
 - **Scoping:** `request.state.user` is set by the `identify` middleware. List queries take an `owner_id`.
