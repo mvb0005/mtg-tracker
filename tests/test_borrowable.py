@@ -75,9 +75,12 @@ def test_deck_page_flags_borrowable_cards(db_path, cache_dir):
     assert re.search(
         r'class="tile[^"]*wanted borrowable"[^>]*title="Owned by 2 friends: Sam \(2\), Alex \(1\)"', html
     )
-    assert ">From 2 friends<" in html
-    assert ">From Alex<" in html
-    assert ">To acquire<" in html  # Mox Opal: nobody has one
+    # Deck pages mark ownership in a corner instead of covering the card text.
+    assert re.search(r'class="tile-own borrow" title="Owned by 2 friends[^"]*" aria-hidden="true">2<', html)
+    one_friend = r'class="tile-own borrow" title="Owned by 1 friend: Alex[^"]*" aria-hidden="true">A<'
+    assert re.search(one_friend, html)
+    assert "tile-flag acquire" not in html  # Mox Opal (nobody has one) gets no mark at all
+    assert "tile-flag borrow" not in html
     assert "<dt>Borrowable</dt><dd>3</dd>" in html
     assert "Borrow from friends" in html
     assert "Nobody has these" in html

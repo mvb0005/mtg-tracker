@@ -285,7 +285,9 @@ def test_deck_grid_shows_images_sections_and_likely_printings(client, db_path, c
     assert '<span class="tile-qty">34\N{MULTIPLICATION SIGN}</span>' in html
     assert "<h3>Lands" in html
     # Unpinned non-basics get an actionable flag; basics don't.
-    assert html.count('class="tile-flag"') == 2  # Sol Ring + Arcane Signet
+    # Sol Ring + Arcane Signet need a printing: on deck pages that's the corner mark, not a label.
+    assert html.count('class="tile-own needs-printing') == 2
+    assert 'class="tile-flag"' not in html
     assert "<span class=\"subtle\">FDC #" not in html  # printing lives in the hover panel
 
 

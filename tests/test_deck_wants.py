@@ -149,7 +149,8 @@ def test_pages_show_the_three_states(client, db_path, scryfall_api):
     panel = {json.loads(d)["name"]: json.loads(d) for _, d in tiles}
     assert panel["Mystic Forge"]["where"] == "Not owned yet: need to acquire"
     assert panel["Mystic Forge"]["wanted"] is True
-    assert 'class="tile-flag acquire">To acquire<' in html
+    assert "tile-flag acquire" not in html  # no label over the card on deck pages
+    assert 'class="tile-own away" title="Yours, not in this deck right now"' in html  # Counterspell
     # A wanted card has no lot, so no "needs printing" link (which would be /printings/None).
     assert "/printings/None" not in html
     assert "4 pull from other decks" in html

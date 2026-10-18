@@ -65,14 +65,26 @@
       <button type="button" class="tile-flip" aria-pressed="false" aria-label="Show the back face of {{ c.card_name }}" title="Flip"
               data-front="{{ c.art.image }}" data-back="{{ c.art.back_image }}"><span aria-hidden="true">⟲</span></button>
     {% endif %}
-    {% if c.wanted and friends %}
+    {% if c.wanted and friends and mode != 'deck' %}
       <span class="tile-flag borrow">From {{ friends[0].name if friends | length == 1 else (friends | length) ~ " friends" }}</span>
-    {% elif c.wanted %}
+    {% elif c.wanted and mode != 'deck' %}
       <span class="tile-flag acquire">To acquire</span>
-    {% elif can_edit and c.mine is not false and not c.set_code and c.card_name not in basic_names %}
+    {% elif mode != 'deck' and not c.wanted and can_edit and c.mine is not false and not c.set_code and c.card_name not in basic_names %}
       <a class="tile-flag" href="/printings/{{ c.lot_id }}">needs printing</a>
     {% endif %}
   </div>
+  {#- Deck pages mark what you own in a corner, off the card's text: filled
+      = in this deck, outlined = yours but elsewhere, an initial = a friend
+      has it. Cards still to buy carry no mark. #}
+  {% if mode == 'deck' %}
+    {% if c.wanted and friends %}
+      <span class="tile-own borrow" title="{{ borrow_summary(friends) }}" aria-hidden="true">{{ friends[0].name[:1] if friends | length == 1 else friends | length }}</span>
+    {% elif not c.wanted and can_edit and c.mine is not false and not c.set_code and c.card_name not in basic_names %}
+      <a class="tile-own needs-printing{% if away %} away{% endif %}" href="/printings/{{ c.lot_id }}" title="{{ 'Yours, not in this deck right now' if away else 'In this deck' }}; pick its printing" aria-label="Pick the printing of {{ c.card_name }}">✓</a>
+    {% elif not c.wanted %}
+      <span class="tile-own{% if away %} away{% endif %}" title="{{ 'Yours, not in this deck right now' if away else 'In this deck' }}" aria-hidden="true">✓</span>
+    {% endif %}
+  {% endif %}
   <figcaption class="visually-hidden">{{ c.card_name }}{% if c.wanted %} (to acquire{% if friends %}; {{ borrow_summary(friends) }}{% endif %}){% elif away %} (not here){% endif %}</figcaption>
 </figure>
 {% endmacro %}

@@ -318,7 +318,22 @@ h3 { font-size: 1rem; margin: 24px 0 10px; }
   grid-template-columns: repeat(auto-fill, minmax(min(var(--tile-min), 100%), 1fr));
   gap: 16px 12px;
 }
-.tile { margin: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.tile { margin: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; position: relative; }
+/* Ownership mark on deck pages: on the card's top-right corner, half outside it, so it never
+   covers card text. Filled = in this deck; outlined = yours, elsewhere; initial = a friend has it. */
+.tile-own {
+  position: absolute; top: -7px; right: -7px; z-index: 1;
+  width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 0.72rem; font-weight: 700; line-height: 1;
+  background: var(--accent); color: var(--bg);
+  box-shadow: 0 0 0 2px var(--bg);
+  pointer-events: auto;
+}
+.tile-own.away { background: var(--bg); color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent), 0 0 0 2px var(--bg); }
+.tile-own.needs-printing { outline: 1.5px dashed var(--accent); outline-offset: 2px; text-decoration: none; }
+.tile-own.needs-printing:hover { text-decoration: none; filter: brightness(1.1); }
+.tile-own.borrow { background: var(--bg); color: var(--muted); box-shadow: inset 0 0 0 1.5px var(--muted), 0 0 0 2px var(--bg); }
 .tile-art {
   position: relative;
   aspect-ratio: 488 / 680;
