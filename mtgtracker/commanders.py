@@ -46,7 +46,10 @@ def eligible(conn: sqlite3.Connection, deck_id: int) -> list[dict]:
     return sorted(result, key=lambda c: cardinfo.mana_value_order(c["card_name"], c["art"]))
 
 
-def set_commander(conn: sqlite3.Connection, deck_id: int, card_name: str | None) -> None:
+def set_commander(
+    conn: sqlite3.Connection, deck_id: int, card_name: str | None,
+    *, commit: bool = True,
+) -> None:
     """Make card_name deck_id's commander, or clear it with None."""
     deck = conn.execute("SELECT format FROM decks WHERE id = ?", (deck_id,)).fetchone()
     if deck is None:
@@ -57,4 +60,5 @@ def set_commander(conn: sqlite3.Connection, deck_id: int, card_name: str | None)
         if card_name not in {c["card_name"] for c in eligible(conn, deck_id)}:
             raise CommanderError(f"{card_name} isn't a legendary creature on this deck's list")
     conn.execute("UPDATE decks SET commander = ? WHERE id = ?", (card_name, deck_id))
-    conn.commit()
+    if commit:
+        conn.commit()

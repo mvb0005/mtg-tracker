@@ -50,7 +50,8 @@ def list_users(conn: sqlite3.Connection) -> list[User]:
 
 
 def create(
-    conn: sqlite3.Connection, display_name: str, email: str | None = None, *, is_admin: bool = False
+    conn: sqlite3.Connection, display_name: str, email: str | None = None, *, is_admin: bool = False,
+    commit: bool = True,
 ) -> User:
     display_name = display_name.strip()
     email = (email or "").strip() or None
@@ -65,7 +66,8 @@ def create(
         "INSERT INTO users (email, display_name, is_admin, created_at) VALUES (?, ?, ?, ?)",
         (email, display_name, int(is_admin), datetime.now(UTC).isoformat()),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return get(conn, cur.lastrowid)
 
 

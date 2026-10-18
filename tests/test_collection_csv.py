@@ -288,7 +288,7 @@ def test_upload_errors_come_back_as_messages(db_path, cache_dir, monkeypatch):
     assert "Choose+a+CSV" in me.post("/people/1/import", data={}, follow_redirects=False).headers["location"]
     bad = _upload(me, 1, text="Quantity\n1\n")
     assert "no+Name+column" in bad.headers["location"]
-    monkeypatch.setattr("mtgtracker.web.app.MAX_UPLOAD_BYTES", 10)
+    monkeypatch.setattr("mtgtracker.services.people.MAX_UPLOAD_BYTES", 10)
     assert "too+big" in _upload(me, 1).headers["location"]
     assert collection_csv.MAX_ROWS > 0
 

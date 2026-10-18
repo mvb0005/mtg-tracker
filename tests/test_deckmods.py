@@ -258,3 +258,23 @@ def test_modify_page_shows_readable_cards_and_one_shared_picker(client, db_path)
     assert 'id="card-panel"' in html
     inserts = re.findall(r'Add</div>\s*<figure class="[^"]*" data-card=\'([^\']*)\'', html)
     assert [json.loads(i)["where"] for i in inserts] == ["In Reign of Dragons (would be borrowed)"] * 2
+
+
+def test_link_a_planned_change_through_the_web(client, db_path):
+    conn = db.connect(db_path)
+    keen, reign = _deck(conn, "Keen Engineering")["id"], _deck(conn, "Reign of Dragons")["id"]
+    copy = _lot(conn, reign, "Blasphemous Act")
+    change = conn.execute(
+        "INSERT INTO deck_changes (deck_id, add_card_name, created_at)"
+        " VALUES (?, 'Blasphemous Act', '2026-10-01')", (keen,),
+    ).lastrowid
+    conn.commit()
+    url = f"/decks/{keen}/changes/{change}/link"
+
+    missing = client.post(url, data={}, follow_redirects=False)
+    assert "error=Pick+a+copy+to+use" in missing.headers["location"]
+    resp = client.post(url, data={"lot_id": str(copy)}, follow_redirects=False)
+    assert resp.status_code == 303
+    assert "notice=Linked+your+copy" in resp.headers["location"]
+    assert conn.execute("SELECT add_lot_id FROM deck_changes WHERE id = ?", (change,)).fetchone()[0] == copy
+    conn.close()

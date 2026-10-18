@@ -154,7 +154,8 @@ def find_printings(card_name: str) -> list[dict]:
 
 
 def assign(
-    conn: sqlite3.Connection, lot_id: int, assignments: list[tuple[str, str, int]]
+    conn: sqlite3.Connection, lot_id: int, assignments: list[tuple[str, str, int]],
+    *, commit: bool = True,
 ) -> int:
     """Pin lots in lot_id's group to printings.
 
@@ -210,5 +211,6 @@ def assign(
             (card["id"], card["name"], card["set"], card["collector_number"],
              json.dumps(card["finishes"]), now),
         )
-    conn.commit()
+    if commit:
+        conn.commit()
     return total

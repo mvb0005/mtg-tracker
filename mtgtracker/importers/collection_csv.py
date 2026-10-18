@@ -250,11 +250,12 @@ def _resolve(rows: list[Row]) -> list[Match | None]:
 
 def import_collection(
     conn: sqlite3.Connection, data: bytes, *, owner_id: int, imported_by: int,
-    filename: str | None = None,
+    filename: str | None = None, commit: bool = True,
 ) -> ImportSummary:
     """Import a collection CSV for owner_id. Parses and resolves everything
     first (so a bad row or a Scryfall outage writes nothing), then writes
-    the import record and every lot in one transaction."""
+    the import record and every lot in one transaction (commit=False leaves
+    it open for the caller to commit or roll back)."""
     sha256 = hashlib.sha256(data).hexdigest()
     if conn.execute(
         "SELECT 1 FROM collection_imports WHERE owner_id = ? AND sha256 = ?", (owner_id, sha256)
@@ -285,7 +286,7 @@ def import_collection(
         lots.extend([lot] * row.qty)
 
     now = datetime.now(UTC).isoformat()
-    with conn:
+    try:
         cur = conn.execute(
             "INSERT INTO collection_imports (owner_id, sha256, original_filename, format, card_count,"
             " imported_by, imported_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -298,6 +299,12 @@ def import_collection(
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [(*lot, import_id) for lot in lots],
         )
+        if commit:
+            conn.commit()
+    except Exception:
+        if commit:
+            conn.rollback()
+        raise
     priced = [lot[6] for lot in lots if lot[6] is not None]
     return ImportSummary(
         import_id=import_id, format=parsed.format, copies=len(lots),

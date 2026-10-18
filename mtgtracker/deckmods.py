@@ -98,7 +98,7 @@ def _change(conn: sqlite3.Connection, deck_id: int, change_id: int) -> sqlite3.R
 
 # --- editing the change list ------------------------------------------------
 
-def add_owned(conn: sqlite3.Connection, deck_id: int, lot_id: int) -> int:
+def add_owned(conn: sqlite3.Connection, deck_id: int, lot_id: int, *, commit: bool = True) -> int:
     """Queue inserting this owned copy into the deck. Returns the change id."""
     _deck(conn, deck_id)
     lot = _check_insertable(conn, deck_id, lot_id)
@@ -107,11 +107,12 @@ def add_owned(conn: sqlite3.Connection, deck_id: int, lot_id: int) -> int:
         " VALUES (?, ?, ?, ?, ?)",
         (deck_id, lot["card_name"], lot_id, lot["scryfall_id"], _now()),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.lastrowid
 
 
-def add_planned(conn: sqlite3.Connection, deck_id: int, name: str) -> int:
+def add_planned(conn: sqlite3.Connection, deck_id: int, name: str, *, commit: bool = True) -> int:
     """Queue a card you don't own yet, looked up by name on Scryfall (an
     explicit network call, cached). Raises ChangeError if no single card
     matches."""
@@ -126,18 +127,23 @@ def add_planned(conn: sqlite3.Connection, deck_id: int, name: str) -> int:
         "INSERT INTO deck_changes (deck_id, add_card_name, add_scryfall_id, created_at) VALUES (?, ?, ?, ?)",
         (deck_id, card["name"], card["id"], _now()),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.lastrowid
 
 
-def link_owned(conn: sqlite3.Connection, deck_id: int, change_id: int, lot_id: int) -> None:
+def link_owned(
+    conn: sqlite3.Connection, deck_id: int, change_id: int, lot_id: int,
+    *, commit: bool = True,
+) -> None:
     """Turn a planned change into an owned one with a copy of the same card."""
     change = _change(conn, deck_id, change_id)
     lot = _check_insertable(conn, deck_id, lot_id, change_id=change_id)
     if scryfall._normalize(lot["card_name"]) != scryfall._normalize(change["add_card_name"]):
         raise ChangeError(f"that copy is {lot['card_name']}, not {change['add_card_name']}")
     conn.execute("UPDATE deck_changes SET add_lot_id = ? WHERE id = ?", (lot_id, change_id))
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def _pending_wants(conn: sqlite3.Connection, deck_id: int, *, exclude: int | None = None) -> set[int]:
@@ -162,7 +168,7 @@ def _check_want(
 
 def set_cut(
     conn: sqlite3.Connection, deck_id: int, change_id: int, cut_lot_id: int | None,
-    *, cut_want_id: int | None = None,
+    *, cut_want_id: int | None = None, commit: bool = True,
 ) -> None:
     """Pick what this insert replaces: an owned copy on the list
     (cut_lot_id), a card the list has but you don't own (cut_want_id), or
@@ -181,10 +187,14 @@ def set_cut(
         "UPDATE deck_changes SET cut_lot_id = ?, cut_want_id = ? WHERE id = ?",
         (cut_lot_id, cut_want_id, change_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
-def add_swap(conn: sqlite3.Connection, deck_id: int, lot_id: int, want_id: int) -> int:
+def add_swap(
+    conn: sqlite3.Connection, deck_id: int, lot_id: int, want_id: int,
+    *, commit: bool = True,
+) -> int:
     """Queue replacing a card the deck lists but you don't own (a
     deck_wants row) with a copy you do own. Returns the change id."""
     _deck(conn, deck_id)
@@ -196,14 +206,16 @@ def add_swap(conn: sqlite3.Connection, deck_id: int, lot_id: int, want_id: int) 
         " VALUES (?, ?, ?, ?, ?, ?)",
         (deck_id, lot["card_name"], lot_id, lot["scryfall_id"], want_id, _now()),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.lastrowid
 
 
-def remove_change(conn: sqlite3.Connection, deck_id: int, change_id: int) -> None:
+def remove_change(conn: sqlite3.Connection, deck_id: int, change_id: int, *, commit: bool = True) -> None:
     _change(conn, deck_id, change_id)
     conn.execute("DELETE FROM deck_changes WHERE id = ?", (change_id,))
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 # --- importing a list ---------------------------------------------------------
@@ -282,7 +294,7 @@ def _free_lots(conn: sqlite3.Connection, deck_id: int | None, owner_id: int) -> 
     return free
 
 
-def import_list(conn: sqlite3.Connection, deck_id: int, text: str) -> ImportSummary:
+def import_list(conn: sqlite3.Connection, deck_id: int, text: str, *, commit: bool = True) -> ImportSummary:
     """Queue every card in a plain-text decklist (see
     importers/decklist_text.py) as inserts on this deck's change list.
 
@@ -291,7 +303,8 @@ def import_list(conn: sqlite3.Connection, deck_id: int, text: str) -> ImportSumm
     so re-importing the same list is harmless. For the rest, free copies you
     own are used first (unassigned ones before ones in other decks, which
     would be borrowed); anything left is queued as planned ("to acquire").
-    Written in one transaction. Raises ChangeError if nothing is readable."""
+    Written in one transaction (commit=False leaves it open for the caller).
+    Raises ChangeError if nothing is readable."""
     from mtgtracker.importers.decklist_text import parse
 
     _deck(conn, deck_id)
@@ -343,12 +356,18 @@ def import_list(conn: sqlite3.Connection, deck_id: int, text: str) -> ImportSumm
             inserts.append((card["name"], lot_id, card["id"]))
 
     now = _now()
-    conn.executemany(
-        "INSERT INTO deck_changes (deck_id, add_card_name, add_lot_id, add_scryfall_id, created_at)"
-        " VALUES (?, ?, ?, ?, ?)",
-        [(deck_id, name, lot_id, scryfall_id, now) for name, lot_id, scryfall_id in inserts],
-    )
-    conn.commit()
+    try:
+        conn.executemany(
+            "INSERT INTO deck_changes (deck_id, add_card_name, add_lot_id, add_scryfall_id, created_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            [(deck_id, name, lot_id, scryfall_id, now) for name, lot_id, scryfall_id in inserts],
+        )
+        if commit:
+            conn.commit()
+    except Exception:
+        if commit:
+            conn.rollback()
+        raise
     return summary
 
 
@@ -376,7 +395,8 @@ class NewDeckSummary:
 
 
 def create_deck_from_list(
-    conn: sqlite3.Connection, name: str, text: str, *, format: str = "Commander", owner_id: int = 1
+    conn: sqlite3.Connection, name: str, text: str, *, format: str = "Commander", owner_id: int = 1,
+    commit: bool = True,
 ) -> NewDeckSummary:
     """A new deck from a plain-text decklist, unassembled: every card you
     own goes on its list *without moving* (unequipped, so it stays in its
@@ -441,9 +461,11 @@ def create_deck_from_list(
             [(deck_id, card_name, scryfall_id, now) for card_name, scryfall_id in wants],
         )
         record_version(conn, deck_id, "Created from a list", commit=False)
-        conn.commit()
+        if commit:
+            conn.commit()
     except Exception:
-        conn.rollback()
+        if commit:
+            conn.rollback()
         raise
     summary.deck_id = deck_id
     return summary
@@ -623,7 +645,10 @@ def _keeps_card(conn: sqlite3.Connection, deck_id: int, card_name: str) -> bool:
     ).fetchone() is not None
 
 
-def apply_changes(conn: sqlite3.Connection, deck_id: int, note: str | None = None) -> int:
+def apply_changes(
+    conn: sqlite3.Connection, deck_id: int, note: str | None = None,
+    *, commit: bool = True,
+) -> int:
     """Apply every pending change as one new version. Owned inserts put that
     copy on the list (equipped here, borrowed if another deck held it);
     planned inserts put the card on the list as wanted ("to acquire").
@@ -689,9 +714,11 @@ def apply_changes(conn: sqlite3.Connection, deck_id: int, note: str | None = Non
         conn.executemany(
             "UPDATE deck_changes SET applied_version = ? WHERE id = ?", [(version, c["id"]) for c in changes]
         )
-        conn.commit()
+        if commit:
+            conn.commit()
     except Exception:
-        conn.rollback()
+        if commit:
+            conn.rollback()
         raise
     return version
 
