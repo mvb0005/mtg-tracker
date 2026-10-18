@@ -13,7 +13,7 @@
     {%- if deck.commander %}Led by <strong>{{ deck.commander }}</strong> · {% endif -%}
     {% if deck.version %}<a href="/decks/{{ deck.id }}/versions/{{ deck.version }}">Version {{ deck.version }}</a>{% else %}Not versioned yet{% endif %}
     · since {{ deck.created_at[:10] }}
-    {%- if can_edit %} · <a class="action-link" href="/decks/{{ deck.id }}/modify">Modify deck</a>{% endif %}
+    {%- if can_edit %} · <a class="action-link" href="/decks/{{ deck.id }}/modify">Modify deck</a> · <a class="action-link" href="/decks/{{ deck.id }}/assemble">Assemble</a>{% endif %}
     · <a class="action-link" href="/decks/{{ deck.id }}/export">Export</a>
   </p>
 </header>
@@ -43,22 +43,35 @@
 </details>
 {% endif %}
 
-<h2>Reassemble</h2>
-{% if not pull_from and not acquire and not borrow_from %}
+{% if pull_list %}
+<h2>Pull list</h2>
+<p class="subtle">From the assembly you just did: where each card was taken from.</p>
+<div class="reassemble">
+  {% for place in pull_list %}
+  <div class="checklist">
+    <div class="checklist-head">{% if place.deck_id is not none %}<a href="/decks/{{ place.deck_id }}">{{ place.name }}</a>{% else %}From {{ place.name }}{% endif %} <span class="subtle">· {{ place.total }}</span></div>
+    <ul>{% for i in place["items"] %}<li><span class="checklist-qty">1</span> {{ i.card_name }}{% if i.printing %} <span class="subtle">{{ i.printing }}</span>{% endif %} <span class="subtle">· {{ i.label }}</span></li>{% endfor %}</ul>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% set ac = assembly_counts %}
+{% if can_edit or borrow_from or acquire %}
+<h2>Assemble</h2>
+{% if can_edit %}
+{% if ac.fill or ac.swap or ac.equip or ac.pull %}
+<p>From what you own you can put
+  {%- for n, word in [(ac.fill, "fill"), (ac.swap, "swap"), (ac.equip, "put in the deck"), (ac.pull, "pull from other decks")] if n %}{{ ", " if not loop.first }} {{ n }} {{ word }}{% endfor %}.
+  <a class="action-link" href="/decks/{{ deck.id }}/assemble">Assemble…</a></p>
+{% elif not acquire and not borrow_from %}
 <p><span class="tag ok">assembled</span> Every card on the list is in the deck.</p>
 {% else %}
+<p class="subtle">Nothing more to put together from what you own.</p>
+{% endif %}
+{% endif %}
+{% if borrow_from or acquire %}
 <div class="reassemble">
-  {% if pull_from %}
-  <section>
-    <h3>Pull from other decks <span class="subtle">({{ elsewhere_count }})</span></h3>
-    {% for g in pull_from %}
-    <div class="checklist">
-      <div class="checklist-head">{% if g.deck_id is not none %}<a href="/decks/{{ g.deck_id }}">{{ g.deck_name }}</a>{% else %}{{ g.deck_name }}{% endif %} <span class="subtle">· {{ g.total }}</span></div>
-      <ul>{% for name, n in g.cards %}<li><span class="checklist-qty">{{ n }}</span> {{ name }}</li>{% endfor %}</ul>
-    </div>
-    {% endfor %}
-  </section>
-  {% endif %}
   {% if borrow_from %}
   <section>
     <h3>Borrow from friends <span class="subtle">({{ borrowable_count }})</span></h3>
@@ -80,6 +93,7 @@
   </section>
   {% endif %}
 </div>
+{% endif %}
 {% endif %}
 
 {% if groups %}{% include "_deck_breakdown.html" %}{% endif %}

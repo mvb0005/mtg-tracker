@@ -459,12 +459,24 @@ def test_service_errors_still_surface_under_dry_run(world):
     assert "error=" in resp.headers["location"]
 
 
+class Json:
+    """A sample sent as a JSON body instead of a form; `{lot_id}` in a string is
+    the id of the pulled lot _fill_path made."""
+
+    def __init__(self, body):
+        self.body = body
+
+    def filled(self, fills):
+        return {k: [v.format(**fills) for v in vs] for k, vs in self.body.items()}
+
+
 # Every risky route, with a minimal valid form. Adding a @risky route without a
 # row here fails test_risky_registry_is_complete.
 RISKY_SAMPLES = {
     ("POST", "/people"): ADD,
     ("DELETE", "/api/v1/imports/{import_id}"): {},
     ("DELETE", "/api/v1/purchases/{purchase_id}"): {},
+    ("POST", "/api/v1/decks/{deck_id}/assembly/pulls"): Json({"line_ids": ["pull:lot:{lot_id}"]}),
 }
 
 
@@ -487,8 +499,21 @@ def _risky_routes(app):
 
 def _fill_path(world, path):
     """Make the sample route's path concrete: an unused import (or manual
-    purchase) of user 1."""
+    purchase) of user 1, or a deck of theirs with a copy that sits in another
+    deck. Returns (path, fills)."""
+    fills = {}
     conn = db.connect(world["db_path"])
+    if "{deck_id}" in path:
+        mine, other = (conn.execute(
+            "INSERT INTO decks (name, format, created_at, owner_id) VALUES (?, 'Commander', 't', 1)", (n,)
+        ).lastrowid for n in ("Sample mine", "Sample other"))
+        lot = conn.execute(
+            "INSERT INTO lots (owner_id, card_name, acquired_date) VALUES (1, 'Sample Card', '2026-01-01')"
+        ).lastrowid
+        conn.execute("INSERT INTO deck_cards (deck_id, lot_id, equipped) VALUES (?, ?, 0)", (mine, lot))
+        conn.execute("INSERT INTO deck_cards (deck_id, lot_id, equipped) VALUES (?, ?, 1)", (other, lot))
+        path = path.replace("{deck_id}", str(mine))
+        fills["lot_id"] = lot
     if "{import_id}" in path:
         cur = conn.execute(
             "INSERT INTO collection_imports (owner_id, sha256, original_filename, format, card_count,"
@@ -504,7 +529,7 @@ def _fill_path(world, path):
         path = path.replace("{purchase_id}", str(cur.lastrowid))
     conn.commit()
     conn.close()
-    return path
+    return path, fills
 
 
 def test_risky_registry_is_complete(world):
@@ -516,9 +541,11 @@ def test_risky_registry_is_complete(world):
 def test_every_risky_route_rejects_an_unconfirmed_system_actor(world, route):
     client = _dev(world, **{"X-Act-For": "1"})
     method, path = route
-    path = _fill_path(world, path)
+    path, fills = _fill_path(world, path)
+    sample = RISKY_SAMPLES[route]
+    body = {"json": sample.filled(fills)} if isinstance(sample, Json) else {"data": sample}
     snapshot = _count(world, "SELECT COUNT(*) FROM users") + _count(world, "SELECT COUNT(*) FROM audit_log")
-    resp = client.request(method, path, data=RISKY_SAMPLES[route], follow_redirects=False)
+    resp = client.request(method, path, follow_redirects=False, **body)
     assert resp.status_code == 409
     assert resp.json()["error"]["code"] == "confirm_required"
     assert resp.json()["confirm"]

@@ -16,7 +16,7 @@ python3 -m venv .venv
 ```
 mtg import-order path/to/Order.order   # imports the purchase, seeds known precon decks
 mtg list-decks
-mtg reassemble-deck <deck-id>          # what to pull back to reassemble a deck's list
+mtg reassemble-deck <deck-id>          # the assembly plan: what could be filled, swapped, equipped or pulled
 mtg serve                              # web UI at http://127.0.0.1:8000
 ```
 
@@ -110,8 +110,8 @@ parameter tuples one value per line, for no functional gain.
   "this card is on this deck's list." An `equipped` flag (enforced unique
   per lot by a partial index) marks which one deck physically holds it
   right now. Borrowing a card into another deck just moves `equipped`;
-  cutting it from a deck's list deletes the row outright. `reassemble`
-  reports every card on a deck's list that isn't currently equipped there.
+  cutting it from a deck's list deletes the row outright. `assembly.plan`
+  sorts every entry on a deck's list into fill, swap, equip, pull, borrow or acquire.
 - Cost basis is allocated evenly by card count across a product's lots
   (largest-remainder rounding, so cents always reconcile), not by market
   value — there's no live pricing in v1.

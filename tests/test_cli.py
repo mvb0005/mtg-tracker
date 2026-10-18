@@ -195,10 +195,13 @@ def test_list_decks_counts_only_equipped_cards(imported):
 
 def test_reassemble_deck_fully_assembled(imported):
     db_path, _ = imported
-    assert _invoke("reassemble-deck", "1", "--db", db_path) == "Deck is fully assembled.\n"
+    out = _invoke("reassemble-deck", "1", "--db", db_path)
+    assert out.splitlines() == [
+        "Reign of Dragons: 100 in the deck, 0 elsewhere, 0 not owned yet", "Deck is fully assembled.",
+    ]
 
 
-def test_reassemble_deck_reports_borrowed_and_unassigned_cards(imported):
+def test_reassemble_deck_plans_pulls_equips_and_the_pull_list(imported):
     db_path, _ = imported
     conn = _connect(db_path)
     reign = _deck_id(conn, "Reign of Dragons")
@@ -212,33 +215,32 @@ def test_reassemble_deck_reports_borrowed_and_unassigned_cards(imported):
     borrowed = lot_for("Lathliss, Dragon Queen")
     borrow(conn, borrowed, keen)
 
-    # A card taken out of the deck and not put anywhere: still on the
-    # list, equipped nowhere.
+    # A card taken out of the deck and not put anywhere: still on the list, equipped nowhere.
     loose = lot_for("Sol Ring")
     conn.execute("UPDATE deck_cards SET equipped = 0 WHERE lot_id = ?", (loose,))
     conn.commit()
     conn.close()
 
     output = _invoke("reassemble-deck", reign, "--db", db_path)
-    assert output.splitlines() == [
-        f"Lathliss, Dragon Queen: currently in deck {keen}",
-        "Sol Ring: currently in deck nowhere (unassigned)",
-    ]
+    assert "Put in the deck (in no deck now) (1):" in output
+    assert f"  Sol Ring  [equip:lot:{loose}]" in output
+    assert "Pull from another deck (risky) (1):" in output
+    assert f"  Lathliss, Dragon Queen (from Keen Engineering)  [pull:lot:{borrowed}]" in output
+    assert "  Keen Engineering (1):\n    Lathliss, Dragon Queen - from Keen Engineering" in output
+    assert "  From your collection (1):\n    Sol Ring - on this list, in no deck" in output
 
 
-def test_reassemble_deck_unknown_id_is_fully_assembled(paths):
-    # Documents current behavior: an unknown deck id isn't an error, it
-    # just has nothing to pull back.
+def test_reassemble_deck_unknown_id_is_an_error(paths):
     db_path, _ = paths
-    assert _invoke("reassemble-deck", "999", "--db", db_path) == "Deck is fully assembled.\n"
+    result = runner.invoke(app, ["reassemble-deck", "999", "--db", str(db_path)])
+    assert result.exit_code == 1
 
 
-def test_add_to_deck_unequipped_keeps_reassemble_listing(imported):
-    # A card listed (unequipped) in a new deck, still equipped in its
-    # precon, shows up when reassembling the new deck.
+def test_add_to_deck_unequipped_shows_up_as_a_pull(imported):
+    # A card listed (unequipped) in a new deck, still equipped in its precon,
+    # is a pull when assembling the new deck.
     db_path, _ = imported
     conn = _connect(db_path)
-    reign = _deck_id(conn, "Reign of Dragons")
     frank = create_deck(conn, "Frankendeck", "2026-10-01")
     lot_id = conn.execute(
         "SELECT id FROM lots WHERE card_name = 'Lathliss, Dragon Queen'"
@@ -247,4 +249,4 @@ def test_add_to_deck_unequipped_keeps_reassemble_listing(imported):
     conn.close()
 
     output = _invoke("reassemble-deck", frank, "--db", db_path)
-    assert output == f"Lathliss, Dragon Queen: currently in deck {reign}\n"
+    assert f"  Lathliss, Dragon Queen (from Reign of Dragons)  [pull:lot:{lot_id}]" in output

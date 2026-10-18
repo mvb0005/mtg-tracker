@@ -33,7 +33,7 @@ from mtgtracker.web import filters, middleware, queries
 from mtgtracker.web.api import v1 as api_v1
 from mtgtracker.web.auth import DEV_COOKIE, AccessVerifier, AuthConfig
 from mtgtracker.web.deps import require_person
-from mtgtracker.web.routes import decks, exports, modify, pages, people, printings, purchases
+from mtgtracker.web.routes import assemble, decks, exports, modify, pages, people, printings, purchases
 
 WEB_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=WEB_DIR / "templates")
@@ -157,7 +157,7 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
             response.set_cookie(DEV_COOKIE, str(user_id), httponly=True, samesite="lax")
             return response
 
-    for module in (pages, decks, people, modify, exports, printings, purchases):
+    for module in (pages, decks, people, modify, assemble, exports, printings, purchases):
         app.include_router(module.router)
     api_v1.install(app)
 

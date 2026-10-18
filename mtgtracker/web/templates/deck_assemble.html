@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% set active = "decks" %}
+{% block title %}Assemble {{ deck.name }}{% endblock %}
+{% import "_card_tiles.html" as cards with context %}
+{% block body_class %}with-panel{% endblock %}
+{% block body_attrs %}{{ theme_attrs(identity) }}{% endblock %}
+{% block panel %}{% include "_card_panel.html" %}{% endblock %}
+{% block content %}
+<p><a href="/decks/{{ deck.id }}">← {{ deck.name }}</a></p>
+<h1>Assemble {{ deck.name }}</h1>
+<p class="subtle">Put the cards you own into this deck. Each step below is something you would do with your hands; choose the ones you want, check the preview, then assemble. Nothing is bought or sold, and no money changes.</p>
+{% include "_flash.html" %}
+
+<dl class="ledger">
+  <div><dt>In the deck</dt><dd>{{ counts_now.here }}</dd></div>
+  <div><dt>On the list, elsewhere</dt><dd>{{ counts_now.away }}</dd></div>
+  <div><dt>Not owned yet</dt><dd>{{ counts_now.wanted }}</dd></div>
+  {% if borrow_count %}<div><dt>Friends have</dt><dd>{{ borrow_count }}</dd></div>{% endif %}
+</dl>
+
+{% if preview %}
+<section class="assemble-preview" id="preview">
+  <h2>Preview</h2>
+  <dl class="ledger">
+    <div><dt>In the deck</dt><dd>{{ counts_now.here }} → {{ preview.counts_after.here }}</dd></div>
+    <div><dt>On the list, elsewhere</dt><dd>{{ counts_now.away }} → {{ preview.counts_after.away }}</dd></div>
+    <div><dt>Not owned yet</dt><dd>{{ counts_now.wanted }} → {{ preview.counts_after.wanted }}</dd></div>
+  </dl>
+  <p>{{ preview.tally.fill }} filled, {{ preview.tally.swap }} swapped, {{ preview.tally.equip }} put in, {{ preview.tally.pull }} pulled.
+  {% if preview.tally.fill or preview.tally.swap %}This records a new version of the list, because the copies on it change.{% else %}The list itself doesn't change, so no new version is recorded.{% endif %}</p>
+  {% if preview.pulls %}<p class="flash err" role="alert">{{ preview.pulls }} card{{ "s" if preview.pulls != 1 }} will leave the decks they are in. Those decks keep them on their lists but will show them as away.</p>{% endif %}
+
+  <h3>Pull list</h3>
+  {% for place in preview.pull_list %}
+  <div class="checklist">
+    <div class="checklist-head">{% if place.deck_id is not none %}<a href="/decks/{{ place.deck_id }}">{{ place.name }}</a>{% else %}From {{ place.name }}{% endif %} <span class="subtle">· {{ place.total }}</span></div>
+    <ul>{% for i in place["items"] %}<li><span class="checklist-qty">1</span> {{ i.card_name }}{% if i.printing %} <span class="subtle">{{ i.printing }}{% if i.finish != "nonfoil" %}, {{ i.finish }}{% endif %}</span>{% endif %} <span class="subtle">· {{ i.label }}</span></li>{% endfor %}</ul>
+  </div>
+  {% endfor %}
+
+  <form method="post" action="/decks/{{ deck.id }}/assemble" class="assemble-confirm">
+    {% for id in preview.ids %}<input type="hidden" name="line" value="{{ id }}">{% endfor %}
+    <label class="field">Version note (optional) <input type="text" name="note" maxlength="200" value="{{ note }}" placeholder="Assembled: {{ preview.tally.fill }} filled, {{ preview.tally.swap }} swapped, {{ preview.tally.pull }} pulled, {{ preview.tally.equip }} equipped"></label>
+    <div class="actions"><button type="submit" class="primary">Assemble</button> <span class="subtle">or change the choices below and preview again.</span></div>
+  </form>
+</section>
+{% endif %}
+
+<form method="post" action="/decks/{{ deck.id }}/assemble/preview" class="assemble-form">
+  {% set total_steps = namespace(n=0) %}
+  {% for key, title, blurb in sections %}
+    {% set rows = items[key] %}
+    {% set total_steps.n = total_steps.n + rows | length %}
+    {% if rows %}
+    <h2>{{ title }} <span class="subtle">({{ rows | length }})</span></h2>
+    <p class="subtle">{{ blurb }}</p>
+    <ul class="assemble-lines">
+      {% for it in rows %}
+      <li class="assemble-line">
+        {{ cards.card_face(it.row, "cards") }}
+        <div class="assemble-body">
+          {% set checked = (it.line.line_id in chosen) if chosen is not none else it.line.default_selected %}
+          <label class="assemble-check">
+            <input type="checkbox" name="line" value="{{ it.line.line_id }}"{% if checked %} checked{% endif %}>
+            <strong>{{ it.line.card_name }}</strong>
+          </label>
+          <span class="subtle">{{ it.where }}</span>
+          {% if it.line.printing %}<span class="subtle">{{ it.line.printing }}{% if it.line.finish != "nonfoil" %}, {{ it.line.finish }}{% endif %}</span>{% endif %}
+          {% if it.line.needs_printing %}<span><span class="tag warn">needs printing</span></span>{% endif %}
+          {% if key == "pull" %}<span><span class="tag away">takes it from {{ it.line.from_deck_name }}</span></span>{% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  {% endfor %}
+  {% if total_steps.n == 0 %}
+  <p class="empty">{% if not counts_now.wanted and not counts_now.away %}<span class="tag ok">assembled</span> Every card on the list is in the deck.{% else %}Nothing to put together from what you own right now.{% endif %}</p>
+  {% else %}
+  <div class="actions assemble-actions"><button type="submit" class="primary">Preview</button> <span class="subtle">Nothing changes until you assemble.</span></div>
+  {% endif %}
+</form>
+
+{% if items.unavailable %}
+<h2>Left alone <span class="subtle">({{ items.unavailable | length }})</span></h2>
+<p class="subtle">Queued to be replaced on the Modify page, so assembling skips them. They also stay out of the shopping list.</p>
+<div class="tile-grid">{% for it in items.unavailable %}{{ cards.card_face(it.row, "cards") }}{% endfor %}</div>
+{% endif %}
+{% if items.borrow %}
+<h2>Borrow from friends <span class="subtle">({{ borrow_count }})</span></h2>
+<p class="subtle">A friend has these. There are no loans yet, so nothing changes here; ask them.</p>
+<div class="tile-grid">{% for it in items.borrow %}{{ cards.card_face(it.row, "cards") }}{% endfor %}</div>
+{% endif %}
+{% if items.acquire %}
+<h2>Still to acquire <span class="subtle">({{ acquire_count }})</span></h2>
+<p class="subtle">You don't own these and no friend does. The shopping export on the deck's Export page lists exactly these.</p>
+<div class="tile-grid">{% for it in items.acquire %}{{ cards.card_face(it.row, "cards") }}{% endfor %}</div>
+{% endif %}
+{% endblock %}

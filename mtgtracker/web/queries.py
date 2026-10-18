@@ -10,8 +10,7 @@ from __future__ import annotations
 import sqlite3
 from collections import Counter
 
-from mtgtracker import cardinfo, scryfall
-from mtgtracker.decks import reassemble
+from mtgtracker import assembly, cardinfo, scryfall
 from mtgtracker.printings import BASIC_LAND_NAMES
 from mtgtracker.web.breakdown import deck_breakdown
 from mtgtracker.web.filters import CardFilters
@@ -195,7 +194,10 @@ def get_deck(
     friend_copies = FriendCopies(conn, {deck["owner_id"], viewer_id} - {None})
     for g in owned + wanted:
         g["friends"] = friend_copies(g["card_name"])
-    borrow_from, acquire = _borrow_lists(wanted)
+    # What assembling would do: the same plan that the Assemble page and the
+    # shopping export use, so "to buy" is wants minus free copies and friends'.
+    assembly_plan = assembly.plan(conn, deck_id, exclude_friends={viewer_id} - {None})
+    borrow_from, acquire = _borrow_lists(assembly_plan)
     # Commander first, then the chosen sort (highest mana value by default);
     # both views split into type sections.
     commander = deck["commander"]
@@ -236,11 +238,11 @@ def get_deck(
         "elsewhere_count": sum(g["qty"] for g in owned if not g["equipped"]),
         "wanted_count": sum(g["qty"] for g in wanted),
         "list_cost_cents": list_cost,
-        "missing": reassemble(conn, deck_id),
-        "pull_from": _pull_groups(reassemble(conn, deck_id), conn),
+        "assembly": assembly_plan,
+        "assembly_counts": {c: len(assembly_plan.of(c)) for c in assembly.CATEGORIES},
         "acquire": acquire,
         "borrow_from": borrow_from,
-        "borrowable_count": sum(min(g["qty"], sum(f["qty"] for f in g["friends"])) for g in wanted),
+        "borrowable_count": len(assembly_plan.of(assembly.BORROW)),
         "deck_names": {row["id"]: row["name"] for row in conn.execute("SELECT id, name FROM decks")},
     }
 
@@ -352,24 +354,24 @@ def borrow_summary(friends: list[dict]) -> str:
     return f"Owned by {len(friends)} friend{'s' if len(friends) != 1 else ''}: {names}"
 
 
-def _borrow_lists(wanted: list[dict]) -> tuple[list[dict], list[tuple[str, int]]]:
-    """Reassemble's to-acquire cards split into per-friend borrow checklists
-    (a card several friends own is listed under each) and what nobody has."""
+def _borrow_lists(plan: assembly.AssemblyPlan) -> tuple[list[dict], list[tuple[str, int]]]:
+    """The plan's wants that free copies don't cover, split into per-friend
+    borrow checklists (a card several friends own is listed under each) and
+    what must be bought (the plan's acquire list)."""
+    by_card: dict[str, list[dict]] = {}
+    counts: Counter = Counter()
+    for line in plan.of(assembly.BORROW):
+        counts[line.card_name] += 1
+        by_card[line.card_name] = line.friends
     by_friend: dict[int, dict] = {}
-    nobody: list[tuple[str, int]] = []
-    for g in wanted:
-        # Copies beyond what friends have between them still need buying.
-        short = g["qty"] - min(g["qty"], sum(f["qty"] for f in g["friends"]))
-        if short:
-            nobody.append((g["card_name"], short))
-        for f in g["friends"]:
+    for name, n in counts.items():
+        for f in by_card[name]:
             entry = by_friend.setdefault(f["id"], {"id": f["id"], "name": f["name"], "cards": []})
-            entry["cards"].append((g["card_name"], min(g["qty"], f["qty"])))
+            entry["cards"].append((name, min(n, f["qty"])))
     for entry in by_friend.values():
         entry["cards"].sort(key=lambda item: item[0].casefold())
         entry["total"] = sum(n for _, n in entry["cards"])
-    return (sorted(by_friend.values(), key=lambda e: (-e["total"], e["name"].casefold())),
-            sorted(nobody, key=lambda item: item[0].casefold()))
+    return (sorted(by_friend.values(), key=lambda e: (-e["total"], e["name"].casefold())), plan.acquire)
 
 
 def _export_name(card_name: str) -> str:
@@ -434,24 +436,6 @@ def _wanted_rows(rows) -> list[dict]:
             "where": "Not owned yet: need to acquire", "printing": "Not owned yet",
         })
     return result
-
-
-def _pull_groups(missing: list[dict], conn: sqlite3.Connection) -> list[dict]:
-    """Reassemble rows grouped by where each card is now, as a physical
-    checklist: [{deck_id, deck_name, cards: [(name, qty)], total}]."""
-    names = {row[0]: row[1] for row in conn.execute("SELECT id, name FROM decks")}
-    groups: dict[int | None, Counter] = {}
-    for row in missing:
-        groups.setdefault(row["current_deck_id"], Counter())[row["card_name"]] += 1
-    return [
-        {
-            "deck_id": deck_id,
-            "deck_name": names.get(deck_id, "Not in any deck") if deck_id is not None else "Not in any deck",
-            "cards": sorted(counter.items(), key=lambda item: item[0].casefold()),
-            "total": sum(counter.values()),
-        }
-        for deck_id, counter in sorted(groups.items(), key=lambda item: (item[0] is None, item[0] or 0))
-    ]
 
 
 def count_cards(conn: sqlite3.Connection, owner_id: int) -> int:

@@ -8,7 +8,6 @@ from pathlib import Path
 import typer
 
 from mtgtracker import db, users
-from mtgtracker.decks import reassemble
 from mtgtracker.importers.order_wallet import import_order_file
 from mtgtracker.importers.precon_decklist import seed_precon_deck_for_product
 
@@ -296,15 +295,47 @@ def reassemble_deck(
     deck_id: int,
     db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db"),
 ):
-    """Show what cards need to be pulled back to reassemble a deck's list."""
+    """Show the assembly plan for a deck's list: what could be filled,
+    swapped, put in or pulled from what you own, what friends have, what is
+    still to buy, and where to take each card from. Read-only; the web page
+    (/decks/ID/assemble) and the API apply it."""
+    from mtgtracker import assembly
+
     conn = _connect(db_path)
-    missing = reassemble(conn, deck_id)
-    if not missing:
+    deck = conn.execute("SELECT name FROM decks WHERE id = ?", (deck_id,)).fetchone()
+    if deck is None:
+        typer.echo(f"No deck with id {deck_id}.", err=True)
+        raise typer.Exit(1)
+    plan = assembly.plan(conn, deck_id)
+    c = plan.counts
+    typer.echo(f"{deck['name']}: {c['here']} in the deck, {c['away']} elsewhere, {c['wanted']} not owned yet")
+    labels = {
+        assembly.FILL: "Fill from your collection", assembly.SWAP: "Swap in a free copy",
+        assembly.EQUIP: "Put in the deck (in no deck now)", assembly.PULL: "Pull from another deck (risky)",
+        assembly.BORROW: "Friends have", assembly.ACQUIRE: "Still to acquire",
+    }
+    for category, title in labels.items():
+        lines = plan.of(category)
+        if not lines:
+            continue
+        typer.echo(f"\n{title} ({len(lines)}):")
+        for line in lines:
+            detail = line.source or (f"from {line.from_deck_name}" if line.from_deck_name else "")
+            if category == assembly.BORROW:
+                detail = ", ".join(f["name"] for f in line.friends)
+            typer.echo(f"  {line.card_name}" + (f" ({detail})" if detail else "")
+                       + (f"  [{line.line_id}]" if line.line_id else ""))
+    if not any(plan.of(x) for x in labels):
         typer.echo("Deck is fully assembled.")
         return
-    for row in missing:
-        where = row["current_deck_id"] if row["current_deck_id"] is not None else "nowhere (unassigned)"
-        typer.echo(f"{row['card_name']}: currently in deck {where}")
+    pull_list = plan.pull_list(list(plan.actionable()))
+    if pull_list:
+        typer.echo("\nPull list:")
+        for place in pull_list:
+            head = place["name"] if place["deck_id"] else "From " + place["name"]
+            typer.echo(f"  {head} ({place['total']}):")
+            for item in place["items"]:
+                typer.echo(f"    {item['card_name']} - {item['label']}")
 
 
 @app.command("restore-points")

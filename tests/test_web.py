@@ -54,7 +54,7 @@ def test_receipt_files_are_not_served(client):
     assert client.get("/static/../receipts/").status_code == 404
 
 
-def test_deck_detail_groups_basics_and_shows_reassemble(client, db_path):
+def test_deck_detail_groups_basics_and_shows_assembly(client, db_path):
     conn = db.connect(db_path)
     keen = conn.execute("SELECT id FROM decks WHERE name = 'Keen Engineering'").fetchone()["id"]
     lot = conn.execute(
@@ -74,8 +74,8 @@ def test_deck_detail_groups_basics_and_shows_reassemble(client, db_path):
     # The borrowed Counterspell's row is greyed out; the panel data says where it is.
     away_row = re.search(r'<li class="deck-row away" data-card=\'([^\']*)\'', html)
     assert json.loads(away_row.group(1))["where"] == "Lent to Blue Pile"
-    assert "Pull from other decks" in html
-    assert re.search(r'<a href="/decks/\d+">Blue Pile</a> <span class="subtle">· 1</span>', html)
+    assert "1 pull from other decks" in html  # the assembly summary links to the Assemble page
+    assert f'href="/decks/{keen}/assemble"' in html
     assert "Blue Pile" in html  # where the borrowed Counterspell is now
     assert "needs printing" in html
 

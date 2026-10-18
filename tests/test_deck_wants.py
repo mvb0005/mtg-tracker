@@ -86,7 +86,8 @@ def test_create_deck_from_list_is_unassembled(db_path, scryfall_api):
     assert detail["identity"] == ("U", "R")  # from the wanted commander
     counts = ("list_count", "equipped_count", "elsewhere_count", "wanted_count")
     assert tuple(detail[k] for k in counts) == (6, 0, 4, 2)
-    assert [g["deck_name"] for g in detail["pull_from"]] == ["Reign of Dragons", "Keen Engineering"]
+    pulls = detail["assembly"].of("pull")
+    assert sorted(ln.from_deck_name for ln in pulls) == ["Keen Engineering"] * 3 + ["Reign of Dragons"]
     assert detail["acquire"] == [("Mystic Forge", 1), ("Saheeli, the Sun's Brilliance", 1)]
     [v1] = deckmods.versions(conn, summary.deck_id)
     assert v1["card_count"] == 6
@@ -151,7 +152,7 @@ def test_pages_show_the_three_states(client, db_path, scryfall_api):
     assert 'class="tile-flag acquire">To acquire<' in html
     # A wanted card has no lot, so no "needs printing" link (which would be /printings/None).
     assert "/printings/None" not in html
-    assert "Pull from other decks" in html
+    assert "4 pull from other decks" in html
     assert "Need to acquire" in html
     assert "To acquire</dt><dd>2</dd>" in html
 
