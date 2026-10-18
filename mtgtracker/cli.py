@@ -133,8 +133,26 @@ def rename_user(
 ):
     """Change a person's display name (user 1 starts as "Owner")."""
     conn = _connect(db_path)
-    renamed = users.rename(conn, _user_id(conn, user), name)
+    try:
+        renamed = users.rename(conn, _user_id(conn, user), name)
+    except users.UserError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"User {renamed.id} is now {renamed.display_name}")
+
+
+@app.command("set-email")
+def set_email(
+    user: str = typer.Argument(..., help="Email or id of the person"),
+    email: str = typer.Argument(..., help="New sign-in email"),
+    db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db", help="SQLite database path"),
+):
+    """Change a person's sign-in email (this changes who can sign in as them)."""
+    conn = _connect(db_path)
+    try:
+        changed = users.set_email(conn, _user_id(conn, user), email)
+    except users.UserError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"User {changed.id} ({changed.display_name}) now signs in with the new email")
 
 
 @app.command("import-collection")

@@ -8,12 +8,12 @@ from __future__ import annotations
 from fastapi import APIRouter, FastAPI
 from fastapi.openapi.utils import get_openapi
 
-from mtgtracker.web.api.v1 import cards, decks, meta, people, purchases
+from mtgtracker.web.api.v1 import cards, decks, meta, people, profile, purchases
 from mtgtracker.web.api.v1.common import install_errors
 
 PREFIX = "/api/v1"
 router = APIRouter()
-for _module in (meta, decks, cards, people, purchases):
+for _module in (meta, decks, cards, people, profile, purchases):
     router.include_router(_module.router)
 
 

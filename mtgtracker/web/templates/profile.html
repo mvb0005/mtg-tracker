@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Your profile{% endblock %}
+{% block content %}
+<h1>Your profile</h1>
+{% include "_flash.html" %}
+<form class="import-form" method="post" action="/profile">
+  <label class="field">Display name <input type="text" name="display_name" value="{{ person.display_name }}" required maxlength="60"></label>
+  <button type="submit" class="primary">Save</button>
+</form>
+<h2>Account</h2>
+<ul class="import-history">
+  <li>Sign-in email: {{ person.email or "not signed in yet" }}</li>
+  <li>Role: {{ "admin" if person.is_admin else "member" }}</li>
+  <li>Member since {{ (person.created_at or "")[:10] or "unknown" }}</li>
+</ul>
+<p class="subtle">Only an admin can change a sign-in email.</p>
+<p class="deck-meta"><a href="/people/{{ person.id }}">Your page and recent activity</a></p>
+{% endblock %}

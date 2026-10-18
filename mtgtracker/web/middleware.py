@@ -38,7 +38,7 @@ def _audit(request: Request, response) -> None:
             return
         endpoint = request.scope.get("endpoint")
         summary = {}
-        notice = query["notice"][0] if query.get("notice") else getattr(request.state, "audit_notice", None)
+        notice = getattr(request.state, "audit_notice", None) or (query.get("notice") or [None])[0]
         if notice:
             summary["notice"] = notice
         preview = getattr(request.state, "audit_preview", None)

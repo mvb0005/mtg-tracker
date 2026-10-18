@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% set active = "people" %}
+{% block title %}Edit {{ person.display_name }}{% endblock %}
+{% block content %}
+<p class="eyebrow"><a href="/people/{{ person.id }}">{{ person.display_name }}</a></p>
+<h1>Edit {{ person.display_name }}</h1>
+{% include "_flash.html" %}
+<form class="import-form" method="post" action="/people/{{ person.id }}/edit">
+  <label class="field">Display name <input type="text" name="display_name" value="{{ person.display_name }}" required maxlength="60"></label>
+  {% if is_self %}
+  <p class="subtle">Your own sign-in email can't be changed here, so you can't lock yourself out. Use <code>mtg set-email</code> at the console.</p>
+  <input type="hidden" name="email" value="{{ person.email or '' }}">
+  {% else %}
+  <label class="field">Sign-in email <input type="email" name="email" value="{{ person.email or '' }}" maxlength="200"></label>
+  <p class="subtle">The email decides who can sign in as {{ person.display_name }}. The old one stops working at once.</p>
+  {% if person.signed_in %}
+  <label class="field"><input type="checkbox" name="confirm_email" value="1"> I understand they'll sign in with the new email</label>
+  {% endif %}
+  {% endif %}
+  <button type="submit" class="primary">Save</button>
+</form>
+{% endblock %}

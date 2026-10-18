@@ -6,6 +6,7 @@
 <h1>{{ person.display_name }}{% if person.id == user.id %} <span class="subtle">(you)</span>{% endif %}</h1>
 {% include "_flash.html" %}
 <p class="deck-meta"><a href="/people/{{ person.id }}/cards">Browse {{ "your" if person.id == user.id else "their" }} cards</a> · {{ card_count }} card{{ "s" if card_count != 1 }}</p>
+{% if can_edit_person and person.id != user.id %}<p class="deck-meta"><a href="/people/{{ person.id }}/edit">Edit {{ person.display_name }}'s name or sign-in email</a></p>{% endif %}
 <h2>Decks</h2>
 {% include "_deck_table.html" %}
 
