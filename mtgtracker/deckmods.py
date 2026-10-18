@@ -633,6 +633,26 @@ def list_size(conn: sqlite3.Connection, deck_id: int) -> int:
     ).fetchone()[0]
 
 
+def list_names(conn: sqlite3.Connection, deck_id: int) -> Counter:
+    """Card-name multiset of the deck's current list: owned plus wanted."""
+    names = Counter(r[0] for r in conn.execute(
+        "SELECT lots.card_name FROM deck_cards JOIN lots ON lots.id = deck_cards.lot_id"
+        " WHERE deck_cards.deck_id = ?", (deck_id,)
+    ))
+    names.update(r[0] for r in conn.execute("SELECT card_name FROM deck_wants WHERE deck_id = ?", (deck_id,)))
+    return names
+
+
+def list_counts(conn: sqlite3.Connection, deck_id: int) -> dict[str, int]:
+    """How the list stands: `here` (physically in this deck), `away` (owned,
+    held by another deck or loose) and `wanted` (not owned: to acquire)."""
+    owned, here = conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(equipped), 0) FROM deck_cards WHERE deck_id = ?", (deck_id,)
+    ).fetchone()
+    wanted = conn.execute("SELECT COUNT(*) FROM deck_wants WHERE deck_id = ?", (deck_id,)).fetchone()[0]
+    return {"here": here, "away": owned - here, "wanted": wanted}
+
+
 # --- applying -----------------------------------------------------------------
 
 def _keeps_card(conn: sqlite3.Connection, deck_id: int, card_name: str) -> bool:

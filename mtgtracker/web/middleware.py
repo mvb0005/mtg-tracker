@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from mtgtracker import audit, db
+from mtgtracker.web import deps
 from mtgtracker.web.auth import ActForError, NotSignedIn
 from mtgtracker.web.auth import resolve as resolve_user
 
@@ -24,8 +25,8 @@ def _audit(request: Request, response) -> None:
     must never break or change the response -- the write already happened --
     so any failure is logged and swallowed."""
     try:
-        if request.method in SAFE_METHODS or response.status_code >= 400:
-            return
+        if request.method in SAFE_METHODS or response.status_code >= 400 or deps.is_dry_run(request):
+            return  # a dry run changed nothing and leaves no audit row
         query = parse_qs(urlsplit(response.headers.get("location", "")).query)
         if query.get("error"):
             return
@@ -34,8 +35,9 @@ def _audit(request: Request, response) -> None:
             return
         endpoint = request.scope.get("endpoint")
         summary = {}
-        if query.get("notice"):
-            summary["notice"] = query["notice"][0]
+        notice = query["notice"][0] if query.get("notice") else getattr(request.state, "audit_notice", None)
+        if notice:
+            summary["notice"] = notice
         preview = getattr(request.state, "audit_preview", None)
         if preview:
             summary["preview"] = preview
@@ -56,6 +58,10 @@ def _audit(request: Request, response) -> None:
             conn.close()
     except Exception:
         log.exception("audit log write failed")
+
+
+def api_error(status: int, code: str, message: str, **extra) -> JSONResponse:
+    return JSONResponse({"error": {"code": code, "message": message, **extra}}, status_code=status)
 
 
 def _refuse(status: int, code: str, message: str, as_json: bool):
@@ -81,12 +87,14 @@ def install(app: FastAPI) -> None:
                     headers=request.headers, cookies=request.cookies,
                 )
             except NotSignedIn as exc:
+                if deps.is_api(request):
+                    return api_error(401, "unauthorized", str(exc))
                 return HTMLResponse(
                     state.templates.get_template("signed_out.html").render(reason=str(exc)),
                     status_code=401,
                 )
             except ActForError as exc:
-                return _refuse(exc.status, exc.code, exc.message, exc.as_json)
+                return _refuse(exc.status, exc.code, exc.message, exc.as_json or deps.is_api(request))
             finally:
                 conn.close()
         response = await call_next(request)
@@ -110,5 +118,7 @@ def install(app: FastAPI) -> None:
             origin = request.headers.get("origin")
             cross_site = request.headers.get("sec-fetch-site") == "cross-site"
             if cross_site or (origin and urlsplit(origin).netloc != request.headers.get("host")):
+                if deps.is_api(request):
+                    return api_error(403, "cross_origin", "Cross-origin request rejected")
                 return PlainTextResponse("Cross-origin request rejected", status_code=403)
         return await call_next(request)

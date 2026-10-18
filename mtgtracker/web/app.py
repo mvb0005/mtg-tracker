@@ -29,6 +29,7 @@ from markupsafe import Markup, escape
 from mtgtracker import confirm, db
 from mtgtracker.cardinfo import BASIC_LAND_NAMES, SECTION_ORDER
 from mtgtracker.web import filters, middleware, queries
+from mtgtracker.web.api import v1 as api_v1
 from mtgtracker.web.auth import DEV_COOKIE, AccessVerifier, AuthConfig
 from mtgtracker.web.deps import require_person
 from mtgtracker.web.routes import decks, exports, modify, pages, people, printings
@@ -169,6 +170,7 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
 
     for module in (pages, decks, people, modify, exports, printings):
         app.include_router(module.router)
+    api_v1.install(app)
 
     return app
 

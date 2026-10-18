@@ -461,19 +461,41 @@ def test_service_errors_still_surface_under_dry_run(world):
 
 # Every risky route, with a minimal valid form. Adding a @risky route without a
 # row here fails test_risky_registry_is_complete.
-RISKY_SAMPLES = {("POST", "/people"): ADD}
+RISKY_SAMPLES = {
+    ("POST", "/people"): ADD,
+    ("DELETE", "/api/v1/imports/{import_id}"): {},
+}
 
 
 def _risky_routes(app):
-    routes = []
-    for top in app.routes:  # include_router() wraps each router
-        routes.extend(getattr(getattr(top, "original_router", None), "routes", [top]))
-    return {
-        (method, route.path)
-        for route in routes
-        if getattr(getattr(route, "endpoint", None), "__risky__", False)
-        for method in route.methods
-    }
+    """(method, full path template) of every @risky route, through nested
+    include_router() wrappers (which keep their prefix in include_context)."""
+    found = set()
+
+    def walk(routes, prefix):
+        for route in routes:
+            nested = getattr(route, "original_router", None)
+            if nested is not None:
+                walk(nested.routes, prefix + route.include_context.prefix)
+            elif getattr(getattr(route, "endpoint", None), "__risky__", False):
+                found.update((method, prefix + route.path) for method in route.methods)
+
+    walk(app.routes, "")
+    return found
+
+
+def _fill_path(world, path):
+    """Make the sample route's path concrete: an unused import of user 1."""
+    if "{import_id}" not in path:
+        return path
+    conn = db.connect(world["db_path"])
+    cur = conn.execute(
+        "INSERT INTO collection_imports (owner_id, sha256, original_filename, format, card_count,"
+        " imported_by, imported_at) VALUES (1, 'sample', 'sample.csv', 'ManaBox', 0, 1, 't')"
+    )
+    conn.commit()
+    conn.close()
+    return path.replace("{import_id}", str(cur.lastrowid))
 
 
 def test_risky_registry_is_complete(world):
@@ -485,6 +507,7 @@ def test_risky_registry_is_complete(world):
 def test_every_risky_route_rejects_an_unconfirmed_system_actor(world, route):
     client = _dev(world, **{"X-Act-For": "1"})
     method, path = route
+    path = _fill_path(world, path)
     snapshot = _count(world, "SELECT COUNT(*) FROM users") + _count(world, "SELECT COUNT(*) FROM audit_log")
     resp = client.request(method, path, data=RISKY_SAMPLES[route], follow_redirects=False)
     assert resp.status_code == 409

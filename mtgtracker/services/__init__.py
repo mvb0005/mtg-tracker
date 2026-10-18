@@ -27,6 +27,22 @@ class NotFoundError(ServiceError):
     """Something the request names doesn't exist."""
 
 
+class CodedError(ServiceError):
+    """A refusal with its own machine-readable code and HTTP status, for the
+    JSON API (`extra` goes into the error object). The web shows the message."""
+
+    code = "rejected"
+    status = 422
+
+    def __init__(self, message: str, **extra):
+        super().__init__(message)
+        self.extra = extra
+
+
+class UpstreamError(ServiceError):
+    """Scryfall (or another outside service) couldn't be reached."""
+
+
 @contextmanager
 def translate_errors() -> Iterator[None]:
     """Deck-change errors and Scryfall outages as ServiceErrors."""
@@ -35,4 +51,4 @@ def translate_errors() -> Iterator[None]:
     except deckmods.ChangeError as exc:
         raise ServiceError(str(exc)) from exc
     except httpx.HTTPError as exc:
-        raise ServiceError("Couldn't reach Scryfall") from exc
+        raise UpstreamError("Couldn't reach Scryfall") from exc

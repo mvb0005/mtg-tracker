@@ -21,16 +21,34 @@ from mtgtracker import audit, confirm, db, restore, users
 log = logging.getLogger(__name__)
 
 
+def is_api(request_or_path) -> bool:
+    path = request_or_path if isinstance(request_or_path, str) else request_or_path.url.path
+    return path == "/api" or path.startswith("/api/")
+
+
+def is_dry_run(request: Request) -> bool:
+    """`?dry_run=1` on a JSON API request: run the real code, then roll it
+    back. Everything that would record the write -- the audit row, the write
+    log's batch id, the restore point -- keys on this, so a dry run leaves no
+    trace (get_conn, run_risky and the audit middleware all check it)."""
+    return is_api(request) and request.query_params.get("dry_run", "").lower() in ("1", "true", "yes")
+
+
 def get_conn(request: Request) -> Iterator[sqlite3.Connection]:
     """One short-lived connection per request, never shared. FastAPI runs
     sync dependencies and endpoints in a threadpool, so it may be created on
     one thread and used on another -- hence check_same_thread=False."""
     conn = db.connect(request.app.state.db_path, check_same_thread=False)
-    if request.method not in ("GET", "HEAD", "OPTIONS") and getattr(request.state, "actor", None) is not None:
+    if (
+        request.method not in ("GET", "HEAD", "OPTIONS") and getattr(request.state, "actor", None) is not None
+        and not is_dry_run(request)  # no audit row, batch id or restore point for a dry run
+    ):
         db.set_batch_provider(conn, lambda c: reserve_audit(request, c))
     try:
         yield conn
     finally:
+        if is_dry_run(request):
+            conn.rollback()
         conn.close()
 
 
@@ -124,6 +142,14 @@ def require_person(request: Request) -> None:
         raise HTTPException(status_code=403, detail="That is for people, not system users")
 
 
+class DryRun(Exception):
+    """run_risky's answer to ?dry_run=1: here is what it would do."""
+
+    def __init__(self, result, preview: dict):
+        super().__init__("dry run")
+        self.result, self.preview = result, preview
+
+
 def run_risky(request: Request, conn: sqlite3.Connection, operation, form):
     """Run a risky write. `operation(conn)` does it uncommitted (services'
     commit=False) and returns (result, preview). A person gets it done, as
@@ -131,6 +157,12 @@ def run_risky(request: Request, conn: sqlite3.Connection, operation, form):
     exact preview first (mtgtracker/confirm.py). Raises ConfirmRequired
     (answered as 409 JSON by create_app) or whatever the operation raises."""
     endpoint = request.scope.get("endpoint")
+    if is_dry_run(request):  # the API's dry run: the preview, for anyone, nothing kept
+        try:
+            result, preview = operation(conn)
+        finally:
+            conn.rollback()
+        raise DryRun(result, preview)
     dry_run = actor(request).kind == "system" and not isinstance(form.get("confirm"), str)
     if not dry_run:  # a dry run changes nothing, so it needs no restore point
         request.state.restore_checked = True
@@ -191,6 +223,8 @@ def may_act_for(request: Request, person: users.User) -> bool:
     principal = me(request)
     if person.id == principal.id:
         return True
+    if actor(request).kind == "system":  # carte blanche: it could act for them anyway
+        return not person.disabled
     return request.app.state.auth.mode in ("dev", "cloudflare") and users.can_act_for(principal, person)
 
 

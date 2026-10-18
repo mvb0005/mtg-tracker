@@ -1,122 +1,117 @@
 """Change a deck on the site to match a target list (or explicit pairs), as ONE
-new version, through the app's own Modify forms. Rehearse against a local
-`mtg serve --db <snapshot>` first; back up with pull-db before running live.
+new version, through the JSON API: a dry run first (printed), then the real
+call with expect_version, then a check that the deck matches.
 
-    apply_list.py BASE DECK_ID --db SNAPSHOT --target LIST [--plan] [--note TEXT]
-    apply_list.py BASE DECK_ID --pairs PAIRS.json [--note TEXT]      # {"adds": [...], "cuts": [...]}
+    apply_list.py DECK_ID --target LIST [--note TEXT] [--plan]
+    apply_list.py DECK_ID --pairs PAIRS.json [--note TEXT] [--plan]   # {"adds": [...], "cuts": [...]}
 
-Adds are always queued as planned ("to acquire") changes, so nothing is moved
-out of another deck. Cuts remove only this deck's copy (wanted or owned).
+Adds are queued by name as planned ("to acquire") changes, so nothing is moved
+out of another deck. Each cut removes one entry of this deck's list by name (a
+wanted card first, then an owned copy), never another deck's. The server
+refuses if the deck changed since it was read (version_conflict) or has
+unapplied Modify-page changes (pending_changes). Every real change is also
+covered by the server's restore point and write log. Config: see _api.py.
 """
 import argparse
 import collections
-import html
-import json
-import re
 import sys
-import time
 
-import httpx
+import _api
 from _common import key, read_list
 
-from mtgtracker import db
-from mtgtracker.web import queries
 
-ap = argparse.ArgumentParser()
-ap.add_argument("base")
-ap.add_argument("deck_id", type=int)
-ap.add_argument("--db", help="snapshot of the target site's DB (for the diff)")
-ap.add_argument("--target", help="decklist to match")
-ap.add_argument("--pairs", help="JSON with adds/cuts instead of a target")
-ap.add_argument("--plan", action="store_true", help="print the swaps and stop")
-ap.add_argument("--note", default="Updated with the deckbuilding skill")
-args = ap.parse_args()
-base, deck = args.base.rstrip("/"), args.deck_id
+def current_counts(deck: dict) -> tuple[collections.Counter, dict]:
+    """(Counter by front-face key, display names) of the deck's list: owned
+    copies plus wanted cards."""
+    counts, names = collections.Counter(), {}
+    for entry in (*deck["cards"], *deck["wants"]):
+        counts[key(entry["name"])] += 1
+        names[key(entry["name"])] = entry["name"]
+    return counts, names
 
-if args.pairs:
-    with open(args.pairs) as f:
-        plan = json.load(f)
-else:
-    if not (args.db and args.target):
-        sys.exit("--target needs --db (a snapshot to diff against)")
-    target, tnames, _ = read_list(args.target)
-    current, cnames = collections.Counter(), {}
-    detail = queries.get_deck(db.connect(args.db), deck, viewer_id=1)
-    for g in detail["groups"]:
-        current[key(g["card_name"])] += g["qty"]
-        cnames[key(g["card_name"])] = g["card_name"]
+
+def diff_lists(current, cnames, target, tnames) -> dict:
+    """The swaps that turn `current` into `target` (Counters by key, with
+    display names): {"adds": [...], "cuts": [...]}, paired one to one. Raises
+    ValueError if the card counts differ, since swaps keep the size."""
     if sum(target.values()) != sum(current.values()):
-        sys.exit(f"target has {sum(target.values())} cards, deck has {sum(current.values())}:"
-                 " add/cut counts must match")
-    plan = {"adds": [tnames[k] for k, q in (target - current).items() for _ in range(q)],
+        raise ValueError(f"target has {sum(target.values())} cards, deck has {sum(current.values())}:"
+                         " add/cut counts must match")
+    return {"adds": [tnames[k] for k, q in (target - current).items() for _ in range(q)],
             "cuts": [cnames[k] for k, q in (current - target).items() for _ in range(q)]}
-if len(plan["adds"]) != len(plan["cuts"]):
-    sys.exit("adds and cuts must pair up one to one")
-print(f"{len(plan['adds'])} swaps")
-for a, c in zip(plan["adds"], plan["cuts"], strict=True):
-    print(f"  + {a}   - {c}")
-if args.plan or not plan["adds"]:
-    sys.exit(0)
-
-client = httpx.Client(headers={"Origin": base}, timeout=90)
-page = lambda: client.get(f"{base}/decks/{deck}/modify").text  # noqa: E731
 
 
-def changes(text):
-    out = []
-    for block in re.split(r'<li class="change', text)[1:]:
-        cid = re.search(r'id="change-(\d+)"', block)
-        card = re.search(r"data-card='([^']*)'", block)
-        if cid and card:
-            tail = block.split("Replaces", 1)[1].split('class="change-actions', 1)[0]
-            name = json.loads(html.unescape(card.group(1)))["name"]
-            out.append((int(cid.group(1)), name, "data-card=" in tail))
-    return out
+def request_body(plan: dict, note: str, version: int) -> dict:
+    """The POST /decks/{id}/changes body: names (or {"lot_id"}/{"want_id"}
+    dicts, as given) for adds and cuts."""
+    def entry(item):
+        return item if isinstance(item, dict) else {"name": item}
+    return {"adds": [entry(a) for a in plan["adds"]], "cuts": [entry(c) for c in plan["cuts"]],
+            "note": note, "expect_version": version}
 
 
-WANT_RE = re.compile(r'name="cut_want_id" value="(\d+)"[^>]*aria-label="Replace ([^"]*) \(not owned\)"')
-LOT_RE = re.compile(r'name="cut_lot_id" value="(\d+)" class="pick-tile" aria-label="Replace ([^"]*)"')
+def describe(item) -> str:
+    return item if isinstance(item, str) else ", ".join(f"{k}={v}" for k, v in item.items())
 
 
-def pick(text, name):
-    """The cut-picker field for this deck's copy of `name`: a wanted card
-    first, otherwise an owned copy on the list."""
-    for field, pattern in (("cut_want_id", WANT_RE), ("cut_lot_id", LOT_RE)):
-        for value, label in pattern.findall(text):
-            if html.unescape(label) == name:
-                return {field: value}
-    return None
+def print_result(result: dict) -> None:
+    print(f"  version {result['previous_version']} -> {result['version']}")
+    print(f"  added:   {', '.join(result['added']) or '-'}")
+    print(f"  removed: {', '.join(result['removed']) or '-'}")
+    counts = result["counts"]
+    print(f"  after:   {counts['here']} here, {counts['away']} away, {counts['wanted']} wanted")
 
 
-if changes(page()):
-    sys.exit("the deck already has pending changes -- apply or remove them first")
-for name in plan["adds"]:
-    for attempt in range(5):
-        r = client.post(f"{base}/decks/{deck}/changes", data={"planned_name": name})
-        err = httpx.URL(r.headers.get("location", "")).params.get("error")
-        if not err or "reach Scryfall" not in err:
-            break
-        time.sleep(5 * (attempt + 1))  # Scryfall rate limit: back off
-    if err:
-        sys.exit(f"add failed: {name}: {err} (remove the queued changes on the Modify page before retrying)")
-    time.sleep(0.5)
-for (cid, added, _), cut in zip(changes(page()), plan["cuts"], strict=True):
-    data = pick(page(), cut)
-    if data is None:
-        sys.exit(f"no {cut!r} on the list to pair with {added}")
-    r = client.post(f"{base}/decks/{deck}/changes/{cid}/cut", data=data)
-    err = httpx.URL(r.headers.get("location", "")).params.get("error")
-    if err:
-        sys.exit(f"cut failed: {added} replacing {cut}: {err}")
-if not all(has for *_, has in changes(page())):
-    sys.exit("not every change has a replacement -- check the Modify page")
-r = client.post(f"{base}/decks/{deck}/apply", data={"note": args.note})
-params = httpx.URL(r.headers.get("location", "")).params
-print("apply:", params.get("notice") or params.get("error"))
-if args.target:
-    live = collections.Counter()
-    for line in client.get(f"{base}/decks/{deck}/export/decklist.txt").text.splitlines():
-        m = re.match(r"^(\d+) (.+?)(?: \([A-Z0-9]+\) \S+)?(?: \*[FE]\*)?$", line)
-        if m:
-            live[key(m.group(2))] += int(m.group(1))
-    print("deck now matches the target:", live == target)
+def main(argv: list[str]) -> None:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("deck_id", type=int)
+    ap.add_argument("--target", help="decklist to match")
+    ap.add_argument("--pairs", help="JSON with adds/cuts instead of a target")
+    ap.add_argument("--plan", action="store_true", help="print the dry run and stop")
+    ap.add_argument("--note", default="Updated with the deckbuilding skill")
+    args = ap.parse_args(argv)
+    path = f"/decks/{args.deck_id}"
+
+    deck = _api.get(path)
+    if deck["pending_changes"]:
+        sys.exit("the deck already has pending changes -- apply or remove them on the Modify page first")
+    target = None
+    if args.pairs:
+        import json
+        with open(args.pairs) as f:
+            plan = json.load(f)
+    elif args.target:
+        target, tnames, _ = read_list(args.target)
+        current, cnames = current_counts(deck)
+        try:
+            plan = diff_lists(current, cnames, target, tnames)
+        except ValueError as exc:
+            sys.exit(str(exc))
+    else:
+        sys.exit("give --target LIST or --pairs JSON")
+    if len(plan["cuts"]) > len(plan["adds"]):
+        sys.exit("more cuts than adds: every cut needs an add to replace it")
+    print(f"{len(plan['adds'])} adds, {len(plan['cuts'])} cuts (deck version {deck['version']})")
+    for i, add in enumerate(plan["adds"]):
+        cut = plan["cuts"][i] if i < len(plan["cuts"]) else None
+        print(f"  + {describe(add)}" + (f"   - {describe(cut)}" if cut is not None else ""))
+    if not plan["adds"]:
+        return
+
+    body = request_body(plan, args.note, deck["version"])
+    print("dry run:")
+    print_result(_api.post(f"{path}/changes", body, params={"dry_run": 1}))
+    if args.plan:
+        return
+    print("applied:")
+    print_result(_api.post(f"{path}/changes", body))
+    if target is not None:
+        live, _ = current_counts(_api.get(path))
+        print("deck now matches the target:", live == target)
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1:])
+    except _api.ApiError as exc:
+        sys.exit(f"apply_list: {exc}")

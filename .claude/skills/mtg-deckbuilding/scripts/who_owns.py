@@ -1,29 +1,40 @@
-"""Who owns each card, and where those copies are (from a DB snapshot --
-take one with deploy/minikube.sh pull-db; never read the live file).
+"""Who owns each card, and where those copies are -- from the site's API
+(/api/v1/cards/owners), so no database snapshot is needed.
 
-    .venv/bin/python .claude/skills/mtg-deckbuilding/scripts/who_owns.py SNAPSHOT.db NAME... | -
+    .venv/bin/python .claude/skills/mtg-deckbuilding/scripts/who_owns.py NAME... | -
 """
-import collections
-import sqlite3
 import sys
 
+import _api
 from _common import key, read_names
 
-conn = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
-wanted = {key(n): n for _, n in read_names(sys.argv[2:])}
-found = collections.defaultdict(list)
-for owner, name, deck in conn.execute(
-    """SELECT users.display_name, lots.card_name, decks.name FROM lots
-       JOIN users ON users.id = lots.owner_id
-       LEFT JOIN dispositions ON dispositions.lot_id = lots.id
-       LEFT JOIN deck_cards ON deck_cards.lot_id = lots.id AND deck_cards.equipped = 1
-       LEFT JOIN decks ON decks.id = deck_cards.deck_id
-       WHERE dispositions.id IS NULL"""
-):
-    k = key(name)
-    if k in wanted:
-        found[k].append((owner, deck or "not in a deck"))
-for k, n in wanted.items():
-    copies = collections.Counter(found.get(k, []))
-    where = "; ".join(f"{owner}: {q} in {deck}" for (owner, deck), q in sorted(copies.items())) or "nobody"
-    print(f"{n}: {where}")
+NOT_IN_A_DECK = "not in a deck"
+CHUNK = 40  # names per request, to keep the URL short
+
+
+def lines(cards: list[dict]) -> list[str]:
+    """One `Name: Owner: Q in Deck; ...` (or `nobody`) line per card."""
+    out = []
+    for card in cards:
+        copies: dict[tuple[str, str], int] = {}
+        for c in card["copies"]:
+            where = (c["owner"], c["deck"] or NOT_IN_A_DECK)
+            copies[where] = copies.get(where, 0) + c["qty"]
+        text = "; ".join(f"{owner}: {q} in {deck}" for (owner, deck), q in sorted(copies.items()))
+        out.append(f"{card['name']}: {text or 'nobody'}")
+    return out
+
+
+def main(argv: list[str]) -> None:
+    wanted = {key(n): n for _, n in read_names(argv)}
+    names = list(wanted.values())
+    for i in range(0, len(names), CHUNK):
+        for line in lines(_api.get("/cards/owners", name=names[i:i + CHUNK])["cards"]):
+            print(line)
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1:])
+    except _api.ApiError as exc:
+        sys.exit(f"who_owns: {exc}")

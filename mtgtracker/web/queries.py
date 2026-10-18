@@ -302,6 +302,43 @@ class FriendCopies:
         return sorted(result, key=lambda f: (-f["qty"], f["name"].casefold()))
 
 
+def card_owners(conn: sqlite3.Connection, names: list[str]) -> list[dict]:
+    """For each requested name, every owner's non-disposed copies grouped by
+    where they physically are (the deck that holds them, or no deck). Names
+    match like FriendCopies does: by normalized name or front face, so
+    "Delver of Secrets" finds the double-faced lot. No money, and the
+    requester's own copies are included."""
+    wanted = {name: _name_keys(name) for name in names}
+    found: dict[str, Counter] = {name: Counter() for name in names}
+    for row in conn.execute(
+        """
+        SELECT lots.card_name, users.id AS owner_id, users.display_name AS owner,
+               current_deck.id AS deck_id, current_deck.name AS deck
+        FROM lots
+        JOIN users ON users.id = lots.owner_id
+        LEFT JOIN dispositions ON dispositions.lot_id = lots.id
+        LEFT JOIN deck_cards AS current ON current.lot_id = lots.id AND current.equipped = 1
+        LEFT JOIN decks AS current_deck ON current_deck.id = current.deck_id
+        WHERE dispositions.id IS NULL
+        """
+    ):
+        keys = _name_keys(row["card_name"])
+        for name, wanted_keys in wanted.items():
+            if keys & wanted_keys:
+                found[name][(row["owner_id"], row["owner"], row["deck_id"], row["deck"])] += 1
+    result = []
+    for name in names:
+        copies = [
+            {"owner_id": oid, "owner": owner, "deck_id": deck_id, "deck": deck,
+             "where": f"in {deck}" if deck else "not in a deck", "qty": qty}
+            for (oid, owner, deck_id, deck), qty in sorted(
+                found[name].items(), key=lambda kv: (kv[0][1].casefold(), kv[0][3] or "")
+            )
+        ]
+        result.append({"name": name, "total": sum(c["qty"] for c in copies), "copies": copies})
+    return result
+
+
 def borrow_summary(friends: list[dict]) -> str:
     """Tooltip text: "Owned by 1 friend: Alex (3)"."""
     if not friends:
@@ -555,6 +592,7 @@ def _with_card_info(rows: list[sqlite3.Row], conn: sqlite3.Connection) -> list[d
         item["art"] = art
         item["category"] = art.category(item["card_name"])
         lot_ids = [int(i) for i in (item.pop("lot_ids") or "").split(",") if i]
+        item["lot_ids"] = lot_ids  # every physical copy in the group (the JSON API lists them singly)
         item["decks"] = _decks_for(lot_ids, memberships)
         result.append(item)
     return result

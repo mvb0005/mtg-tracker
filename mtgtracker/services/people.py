@@ -8,7 +8,7 @@ import httpx
 
 from mtgtracker import users
 from mtgtracker.importers import collection_csv
-from mtgtracker.services import ServiceError
+from mtgtracker.services import ServiceError, UpstreamError
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 TOO_BIG = "That file is too big (5 MB at most)"
@@ -62,20 +62,27 @@ def set_system_disabled(conn: sqlite3.Connection, user_id: int, disabled: bool) 
     return f"{user.display_name} {'disabled' if disabled else 'enabled'}."
 
 
-def import_collection(
+def import_collection_summary(
     conn: sqlite3.Connection, owner: users.User, actor: users.User, data: bytes, filename: str,
     *, commit: bool = True,
-) -> str:
+) -> collection_csv.ImportSummary:
     """Import a collection CSV into owner's collection (the caller checked
-    the actor may act for them). Returns the notice."""
+    the actor may act for them). Returns the importer's summary."""
     if len(data) > MAX_UPLOAD_BYTES:
         raise ServiceError(TOO_BIG)
     try:
-        summary = collection_csv.import_collection(
+        return collection_csv.import_collection(
             conn, data, owner_id=owner.id, imported_by=actor.id, filename=filename[:200], commit=commit
         )
     except collection_csv.CollectionImportError as exc:
         raise ServiceError(str(exc)) from exc
     except httpx.HTTPError as exc:
-        raise ServiceError("Couldn't reach Scryfall; nothing was imported") from exc
-    return summary.message()
+        raise UpstreamError("Couldn't reach Scryfall; nothing was imported") from exc
+
+
+def import_collection(
+    conn: sqlite3.Connection, owner: users.User, actor: users.User, data: bytes, filename: str,
+    *, commit: bool = True,
+) -> str:
+    """As import_collection_summary, returning the notice."""
+    return import_collection_summary(conn, owner, actor, data, filename, commit=commit).message()
