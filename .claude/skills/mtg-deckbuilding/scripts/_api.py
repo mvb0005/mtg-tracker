@@ -5,7 +5,7 @@ Config comes from the environment, then from the repo's gitignored .env
 env_value: optional `export`, surrounding quotes and whitespace stripped,
 last assignment wins):
 
-    MTG_BASE_URL             default https://mtg.example.com
+    MTG_BASE_URL             the site, e.g. https://mtg.example.com (required)
     CF_ACCESS_CLIENT_ID      Cloudflare Access service token (both, or neither)
     CF_ACCESS_CLIENT_SECRET
     MTG_ACT_FOR              the user id the system user acts for (default 1)
@@ -32,7 +32,7 @@ from pathlib import Path
 import httpx
 
 REPO = Path(__file__).resolve().parents[4]
-DEFAULT_BASE = "https://mtg.example.com"
+DEFAULT_BASE = ""  # no default: set MTG_BASE_URL in .env
 PREFIX = "/api/v1"
 
 
@@ -160,6 +160,8 @@ def _setup() -> tuple[httpx.Client, Config]:
     global _client, _config
     if _config is None:
         _config = load_config()
+    if not _config.base_url:
+        raise ApiError(0, "config", "set MTG_BASE_URL (e.g. https://mtg.example.com) in the env or .env")
     if _client is None:
         _client = httpx.Client(base_url=_config.base_url, follow_redirects=False, timeout=90)
     return _client, _config

@@ -176,7 +176,7 @@ def resolve(conn: sqlite3.Connection, config: AuthConfig, verifier: AccessVerifi
     else:
         token = headers.get("cf-access-jwt-assertion") or cookies.get("CF_Authorization")
         if not token:
-            raise NotSignedIn("sign in through mtg.example.com")
+            raise NotSignedIn("sign in through Cloudflare Access")
         identity = verifier.verify(token)
         if identity.email:
             actor = _person(conn, config, identity.email)

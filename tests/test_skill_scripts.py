@@ -74,7 +74,7 @@ def test_environment_beats_the_env_file_and_defaults_apply(tmp_path):
     assert (cfg.act_for, cfg.base_url) == ("7", "https://file.example")
     bare = _api.load_config(environ={}, env_file=tmp_path / "missing")
     assert (bare.base_url, bare.act_for, bare.client_id, bare.dev_service) == (
-        "https://mtg.example.com", "1", "", "")
+        "", "1", "", "")  # no default site: MTG_BASE_URL must be set
 
 
 def test_secrets_are_not_in_the_repr():

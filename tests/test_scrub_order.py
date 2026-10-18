@@ -131,8 +131,20 @@ def test_scrubbed_order_imports_identically(dirty_order, scrubbed_order, tmp_pat
 
 
 def test_scrub_order_json_tolerates_missing_optional_fields():
-    raw = json.dumps({"orderNumber": "#1", "payment": {"total": {"amount": "1"}}}).encode()
+    raw = json.dumps({"status": "open", "payment": {"total": {"amount": "1"}}}).encode()
     assert json.loads(scrub_order.scrub_order_json(raw)) == json.loads(raw)
+
+
+def test_scrub_removes_card_digits_store_and_signature(scrubbed_order):
+    contents, _ = _read_zip(scrubbed_order)
+    data = json.loads(contents["order.json"])
+    assert data["payment"]["transactions"][0]["paymentMethod"]["displayName"] == "Visa 0000"
+    assert data["orderNumber"] == "#00000"
+    assert data["merchant"]["displayName"] == "Example Games"
+    assert set(data["fulfillments"][0]["fulfillmentIdentifier"]) == {"0"}
+    assert "signature" not in contents
+    manifest = json.loads(contents["manifest.json"])
+    assert set(manifest) == set(contents) - {"manifest.json"}
 
 
 def test_scrubbing_is_idempotent(scrubbed_order, tmp_path):
