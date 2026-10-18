@@ -1,7 +1,9 @@
 """The audit log: one row per successful write request, saying who did it
 (actor) and whose things it changed (principal; the same user for a person,
-the person a system user acted for otherwise). Written by the identify
-middleware (web/middleware.py), read on a person's page."""
+the person a system user acted for otherwise). A web write reserves its row in
+the same transaction as its first change (web/deps.py), so the write log's
+batch_id is this row's id; the identify middleware (web/middleware.py)
+fills in the summary afterwards. Read on a person's page."""
 
 from __future__ import annotations
 
@@ -48,3 +50,15 @@ def recent(conn: sqlite3.Connection, principal_id: int, limit: int = 20) -> list
         entry["notice"] = summary.get("notice", "")
         out.append(entry)
     return out
+
+
+def finish(
+    conn: sqlite3.Connection, audit_id: int, summary: dict | None, restore_point: str | None = None
+) -> None:
+    """Fill in a row reserved while its request ran (web/deps.py), once the
+    outcome is known."""
+    conn.execute(
+        "UPDATE audit_log SET summary_json = ?, restore_point = COALESCE(restore_point, ?) WHERE id = ?",
+        (json.dumps(summary, sort_keys=True) if summary else None, restore_point, audit_id),
+    )
+    conn.commit()

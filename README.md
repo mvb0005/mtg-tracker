@@ -27,6 +27,8 @@ deploy/minikube.sh start               # bring the cluster back after a reboot (
 deploy/minikube.sh up                  # build image into minikube, apply deploy/k8s, wait
 deploy/minikube.sh load-db             # snapshot data/mtgtracker.db (+ receipts/) into the pod's volume
 deploy/minikube.sh pull-db             # copy the cluster DB back to data/mtgtracker.db (old one backed up)
+deploy/minikube.sh pull-restore NAME  # copy a restore point out of the pod (to data/restore/)
+deploy/minikube.sh restore FILE        # put a restore point / recovered DB in place (live DB pulled to a backup first)
 deploy/minikube.sh forward             # UI at http://127.0.0.1:8000
 deploy/minikube.sh import Order.order  # or import straight into the cluster DB
 deploy/minikube.sh down                # remove the app, keep the data volume
@@ -62,6 +64,21 @@ The cluster keeps its own copy of the database on a persistent volume,
 separate from the local `data/mtgtracker.db`. Printings you pick in the UI and
 orders added with `import` land in the cluster copy. Run `pull-db` before
 `load-db`, because `load-db` replaces the cluster copy wholesale.
+
+## Safety net
+
+Every change to every table is appended to a write log (`changelog`), and the
+web app takes a gzipped snapshot ("restore point") into `restore/` beside the
+database before a write when the newest one is over 10 minutes old, and before
+every risky action. It keeps the 50 newest, plus the newest of every day, forever.
+
+```
+mtg restore-points                                   # list them
+mtg recover POINT.db.gz --out recovered.db [--until-time ISO | --until-seq N | --until-audit ID]
+mtg undo-batch AUDIT_ID [--yes]                      # reverse one web request (dry run without --yes)
+```
+`recover` rebuilds the database as of a moment from a point plus the log and
+never touches the live one; put the result in place with `deploy/minikube.sh restore`.
 
 ## Modifying decks
 

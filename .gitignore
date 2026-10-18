@@ -25,3 +25,6 @@ data/*.db-shm
 
 # Local secrets (e.g. CLOUDFLARE_TUNNEL_TOKEN) -- never committed
 .env
+
+# restore points (full database snapshots)
+data/restore/

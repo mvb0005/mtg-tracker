@@ -8,6 +8,7 @@ verifier and templates on `app.state`, and these read them from the request.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Iterator
 from urllib.parse import urlencode
@@ -15,7 +16,9 @@ from urllib.parse import urlencode
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from mtgtracker import confirm, db, users
+from mtgtracker import audit, confirm, db, restore, users
+
+log = logging.getLogger(__name__)
 
 
 def get_conn(request: Request) -> Iterator[sqlite3.Connection]:
@@ -23,10 +26,59 @@ def get_conn(request: Request) -> Iterator[sqlite3.Connection]:
     sync dependencies and endpoints in a threadpool, so it may be created on
     one thread and used on another -- hence check_same_thread=False."""
     conn = db.connect(request.app.state.db_path, check_same_thread=False)
+    if request.method not in ("GET", "HEAD", "OPTIONS") and getattr(request.state, "actor", None) is not None:
+        db.set_batch_provider(conn, lambda c: reserve_audit(request, c))
     try:
         yield conn
     finally:
         conn.close()
+
+
+def reserve_audit(request: Request, conn: sqlite3.Connection) -> int | None:
+    """The audit row of this write request, created inside the transaction
+    that makes the change (called just before its first write). It becomes
+    the write log's batch_id, so every changelog row links to it; a request
+    that rolls back leaves neither. The middleware fills in the summary
+    after the response. Called again for a later transaction of the same
+    request, it returns the same row (unless a rollback took it away).
+    A failure here is logged and the write goes ahead untagged: the audit
+    log must never break a request."""
+    try:
+        _restore_point_before_first_write(request)
+        return _reserve_audit(request, conn)
+    except Exception:
+        log.exception("audit reservation failed")
+        return None
+
+
+def _restore_point_before_first_write(request: Request) -> None:
+    """The restore point for an ordinary write, taken when the request is
+    about to make its first change (so refused requests, 404s and dry runs
+    never take one): only if the newest is over 10 minutes old, since
+    the write log covers the gaps. A @risky route takes its own, forced,
+    in run_risky. restore.maybe_take never raises."""
+    if getattr(request.state, "restore_checked", False):
+        return
+    request.state.restore_checked = True
+    endpoint = request.scope.get("endpoint")
+    if not getattr(endpoint, "__risky__", False):
+        request.state.restore_point = restore.maybe_take(
+            request.app.state.db_path, getattr(endpoint, "__name__", "write")
+        )
+
+
+def _reserve_audit(request: Request, conn: sqlite3.Connection) -> int:
+    audit_id = getattr(request.state, "audit_id", None)
+    if audit_id is not None and conn.execute("SELECT 1 FROM audit_log WHERE id = ?", (audit_id,)).fetchone():
+        return audit_id
+    endpoint = request.scope.get("endpoint")
+    request.state.audit_id = audit.record(
+        conn, actor_id=request.state.actor.id, principal_id=request.state.user.id,
+        method=request.method, path=request.url.path, action=getattr(endpoint, "__name__", "unknown"),
+        target=request.scope.get("path_params") or None,
+        restore_point=getattr(request.state, "restore_point", None), commit=False,
+    )
+    return request.state.audit_id
 
 
 def render(request: Request, template: str, status_code: int = 200, **context) -> HTMLResponse:
@@ -78,6 +130,13 @@ def run_risky(request: Request, conn: sqlite3.Connection, operation, form):
     their form already shows what it does; a system actor must confirm the
     exact preview first (mtgtracker/confirm.py). Raises ConfirmRequired
     (answered as 409 JSON by create_app) or whatever the operation raises."""
+    endpoint = request.scope.get("endpoint")
+    dry_run = actor(request).kind == "system" and not isinstance(form.get("confirm"), str)
+    if not dry_run:  # a dry run changes nothing, so it needs no restore point
+        request.state.restore_checked = True
+        request.state.restore_point = restore.maybe_take(
+            request.app.state.db_path, getattr(endpoint, "__name__", "risky"), force=True
+        ) or getattr(request.state, "restore_point", None)
     if actor(request).kind != "system":
         result, preview = operation(conn)
         conn.commit()

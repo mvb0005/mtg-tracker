@@ -509,7 +509,7 @@ def test_successful_write_is_audited(world):
     assert row["path"] == f"/decks/{keen}/notes"
     assert row["action"] == "deck_save_notes"
     assert json.loads(row["target"]) == {"deck_id": str(keen)}
-    assert row["restore_point"] is None
+    assert row["restore_point"].endswith("-deck-save-notes.db.gz")
     conn.close()
     # A person's own write: actor == principal.
     me = TestClient(create_app(world["db_path"], auth=AuthConfig(mode="dev")))

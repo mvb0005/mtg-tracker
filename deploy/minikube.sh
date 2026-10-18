@@ -5,6 +5,8 @@
 #   deploy/minikube.sh up                 build the image into minikube, apply manifests, wait
 #   deploy/minikube.sh load-db [DB]       copy a local DB (default data/mtgtracker.db) + receipts/ into the pod
 #   deploy/minikube.sh pull-db [DB]       copy the pod's DB back to a local file (old one kept as a backup)
+#   deploy/minikube.sh pull-restore NAME [DEST]  copy one restore point (NAME.db.gz + .json) from the pod's /data/restore/ to DEST (default data/restore/)
+#   deploy/minikube.sh restore FILE       replace the cluster DB with FILE (.db or .db.gz): pulls the live DB to data/mtgtracker.pre-restore-<ts>.db first
 #   deploy/minikube.sh import FILE.order  run `mtg import-order` inside the pod against the cluster DB
 #   deploy/minikube.sh forward [PORT]     port-forward the UI to http://127.0.0.1:PORT (default 8000), reconnecting across redeploys
 #   deploy/minikube.sh tunnel             expose the app via Cloudflare Tunnel (token from stdin, .env, or a prompt)
@@ -158,6 +160,49 @@ dst.close(); src.close()
   echo "Pulled $p:$DATA/mtgtracker.db into $dest"
 }
 
+# Copy a restore point (the app takes them: mtgtracker/restore.py) out of the
+# pod. NAME is a file name from `mtg restore-points`, with or without .db.gz.
+cmd_pull_restore() {
+  local name=${1:?usage: pull-restore NAME [DEST]}
+  local dest=${2:-data/restore}
+  name=${name%.db.gz}
+  name=${name%.json}
+  [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || { echo "bad restore point name: $name" >&2; exit 1; }
+  local p
+  p=$(pod)
+  "${KUBECTL[@]}" exec "$p" -- test -f "$DATA/restore/$name.db.gz" \
+    || { echo "no restore point $name in the pod (see: kubectl exec $p -- ls $DATA/restore)" >&2; exit 1; }
+  mkdir -p "$dest"
+  "${KUBECTL[@]}" cp "$p:$DATA/restore/$name.db.gz" "$dest/$name.db.gz" >/dev/null
+  "${KUBECTL[@]}" cp "$p:$DATA/restore/$name.json" "$dest/$name.json" >/dev/null 2>&1 || true
+  echo "Pulled restore point $name into $dest/"
+}
+
+# Put a database file (a restore point, or a `mtg recover` result) in place of
+# the cluster's. The current cluster DB is pulled to a local file first, so
+# this is undoable; the swap itself is load-db's (online backup, temp name,
+# rename). A restore point from before a migration is on the old schema:
+# restart the deployment afterwards so it migrates (kubectl rollout restart).
+cmd_restore() {
+  local src=${1:?usage: restore FILE.db[.gz]}
+  [[ -f $src ]] || { echo "no file at $src" >&2; exit 1; }
+  local tmp
+  tmp=$(mktemp -d)
+  case $src in
+    *.gz) gunzip -c "$src" >"$tmp/restore.db" || { rm -rf "$tmp"; exit 1; } ;;
+    *) cp "$src" "$tmp/restore.db" ;;
+  esac
+  python3 - "$tmp/restore.db" <<'EOF' || { rm -rf "$tmp"; echo "$src is not a healthy SQLite database" >&2; exit 1; }
+import sqlite3, sys
+ok = sqlite3.connect(sys.argv[1]).execute("PRAGMA integrity_check").fetchone()[0]
+sys.exit(0 if ok == "ok" else 1)
+EOF
+  cmd_pull_db "data/mtgtracker.pre-restore-$(date +%Y%m%d-%H%M%S).db" || { rm -rf "$tmp"; exit 1; }
+  cmd_load_db "$tmp/restore.db"
+  rm -rf "$tmp"
+  echo "Restored $src. If it predates a migration, run: ${KUBECTL[*]} rollout restart deployment/mtgtracker"
+}
+
 cmd_import() {
   local file=${1:?usage: import FILE.order}
   local p
@@ -232,11 +277,13 @@ case ${1:-} in
   up) cmd_up ;;
   load-db) shift; cmd_load_db "$@" ;;
   pull-db) shift; cmd_pull_db "$@" ;;
+  pull-restore) shift; cmd_pull_restore "$@" ;;
+  restore) shift; cmd_restore "$@" ;;
   import) shift; cmd_import "$@" ;;
   forward) shift; cmd_forward "$@" ;;
   tunnel) cmd_tunnel ;;
   tunnel-down) cmd_tunnel_down ;;
   down) cmd_down ;;
   destroy) cmd_destroy ;;
-  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

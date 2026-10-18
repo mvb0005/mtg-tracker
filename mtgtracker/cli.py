@@ -258,6 +258,73 @@ def reassemble_deck(
         typer.echo(f"{row['card_name']}: currently in deck {where}")
 
 
+@app.command("restore-points")
+def restore_points(db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db")):
+    """List the restore points kept beside the database (newest last)."""
+    from mtgtracker import restore
+
+    points = restore.list_points(restore.restore_dir(db_path))
+    if not points:
+        typer.echo("No restore points.")
+    for p in points:
+        seq = "?" if p["changelog_seq"] is None else p["changelog_seq"]
+        typer.echo(
+            f"{p['created_at']:%Y-%m-%d %H:%M:%S}Z  seq {seq:>6}  {p['size']:>9,} B"
+            f"  {p['action']}  {p['name']}"
+        )
+
+
+@app.command("recover")
+def recover_cmd(
+    point: Path = typer.Argument(..., help="A restore point (.db.gz)"),
+    out: Path = typer.Option(..., "--out", help="New database file to write (must not exist)"),
+    log_db: Path = typer.Option(DEFAULT_DB_PATH, "--log-db", help="DB whose write log to replay (read-only)"),
+    until_seq: int = typer.Option(None, "--until-seq", help="Replay log rows up to and including this seq"),
+    until_time: str = typer.Option(None, "--until-time", help="Replay log rows up to this ISO time"),
+    until_audit: int = typer.Option(None, "--until-audit", help="Stop just before this audit id"),
+):
+    """Rebuild the database as of a moment: a restore point plus the write log. Never touches the live DB."""
+    from mtgtracker import recover as recovery
+
+    try:
+        s = recovery.recover(
+            point, log_db, out, until_seq=until_seq, until_time=until_time, until_audit=until_audit
+        )
+    except recovery.RecoverError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"Wrote {out}: applied {s.applied} log rows ({s.point_seq} -> {s.final_seq}).")
+    for table, (n, live) in s.counts.items():
+        mark = "" if live == n else f"   (live: {live})"
+        typer.echo(f"  {table:<22}{n:>8}{mark}")
+    if s.fk_problems:
+        typer.echo(f"WARNING: {len(s.fk_problems)} foreign key problems, e.g. {s.fk_problems[0]}")
+
+
+@app.command("undo-batch")
+def undo_batch_cmd(
+    audit_id: int = typer.Argument(..., help="audit_log id of the request to undo"),
+    yes: bool = typer.Option(False, "--yes", help="Do it (default: a dry run that writes nothing)"),
+    db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db"),
+):
+    """Reverse one web request's changes, by its audit id."""
+    from mtgtracker import recover as recovery
+
+    conn = _connect(db_path)
+    try:
+        preview = recovery.undo_batch(conn, audit_id, commit=yes)
+        if not yes:
+            conn.rollback()
+    except recovery.RecoverError as exc:
+        conn.rollback()
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        conn.close()
+    for step in preview:
+        typer.echo(f"  {step['undo']:<10}{step['table']} row {step['row_id']}  (log seq {step['seq']})")
+    n = len(preview)
+    typer.echo(f"Undid {n} changes." if yes else f"Would undo {n} changes. Re-run with --yes.")
+
+
 @app.command()
 def serve(
     db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db", help="SQLite database path"),

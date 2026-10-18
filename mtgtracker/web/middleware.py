@@ -41,11 +41,17 @@ def _audit(request: Request, response) -> None:
             summary["preview"] = preview
         conn = db.connect(request.app.state.db_path, check_same_thread=False)
         try:
-            audit.record(
-                conn, actor_id=actor.id, principal_id=principal.id, method=request.method,
-                path=request.url.path, action=getattr(endpoint, "__name__", "unknown"),
-                target=request.scope.get("path_params") or None, summary=summary or None,
-            )
+            restore_point = getattr(request.state, "restore_point", None)
+            audit_id = getattr(request.state, "audit_id", None)
+            if audit_id is not None:  # reserved with the change (deps.reserve_audit)
+                audit.finish(conn, audit_id, summary or None, restore_point)
+            else:  # a successful write that changed nothing
+                audit.record(
+                    conn, actor_id=actor.id, principal_id=principal.id, method=request.method,
+                    path=request.url.path, action=getattr(endpoint, "__name__", "unknown"),
+                    target=request.scope.get("path_params") or None, summary=summary or None,
+                    restore_point=restore_point,
+                )
         finally:
             conn.close()
     except Exception:
