@@ -52,3 +52,15 @@ def largest_remainder_split(total_cents: int, weights: list[int]) -> list[int]:
 
     assert sum(shares) == total_cents
     return shares
+
+
+def format_cents(cents: int | None, currency: str = "USD") -> str:
+    """Integer cents -> "$1,234.56". Integer arithmetic only, never floats."""
+    if cents is None:
+        return "—"
+    sign = "-" if cents < 0 else ""
+    dollars, remainder = divmod(abs(cents), 100)
+    amount = f"{dollars:,}.{remainder:02d}"
+    if currency == "USD":
+        return f"{sign}${amount}"
+    return f"{sign}{amount} {currency}"

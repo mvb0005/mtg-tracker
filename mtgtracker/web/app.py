@@ -28,26 +28,15 @@ from markupsafe import Markup, escape
 
 from mtgtracker import confirm, db
 from mtgtracker.cardinfo import BASIC_LAND_NAMES, SECTION_ORDER
+from mtgtracker.money import format_cents
 from mtgtracker.web import filters, middleware, queries
 from mtgtracker.web.api import v1 as api_v1
 from mtgtracker.web.auth import DEV_COOKIE, AccessVerifier, AuthConfig
 from mtgtracker.web.deps import require_person
-from mtgtracker.web.routes import decks, exports, modify, pages, people, printings
+from mtgtracker.web.routes import decks, exports, modify, pages, people, printings, purchases
 
 WEB_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=WEB_DIR / "templates")
-
-
-def format_cents(cents: int | None, currency: str = "USD") -> str:
-    """Integer cents -> "$1,234.56". Integer arithmetic only, never floats."""
-    if cents is None:
-        return "—"
-    sign = "-" if cents < 0 else ""
-    dollars, remainder = divmod(abs(cents), 100)
-    amount = f"{dollars:,}.{remainder:02d}"
-    if currency == "USD":
-        return f"{sign}${amount}"
-    return f"{sign}{amount} {currency}"
 
 
 templates.env.filters["money"] = format_cents
@@ -168,7 +157,7 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
             response.set_cookie(DEV_COOKIE, str(user_id), httponly=True, samesite="lax")
             return response
 
-    for module in (pages, decks, people, modify, exports, printings):
+    for module in (pages, decks, people, modify, exports, printings, purchases):
         app.include_router(module.router)
     api_v1.install(app)
 

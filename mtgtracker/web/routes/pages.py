@@ -35,13 +35,13 @@ def transactions(request: Request, conn: sqlite3.Connection = Depends(get_conn))
 
 @router.get("/transactions/{transaction_id}", response_class=HTMLResponse)
 def transaction_detail(
-    transaction_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+    transaction_id: int, request: Request, notice: str = "", conn: sqlite3.Connection = Depends(get_conn)
 ):
     detail = queries.get_transaction(conn, transaction_id)
     # Purchases are private: someone else's is simply not found.
     if detail is None or detail["txn"]["owner_id"] != me(request).id:
         raise HTTPException(status_code=404, detail="No such transaction")
-    return render(request, "transaction_detail.html", **detail)
+    return render(request, "transaction_detail.html", notice=notice, **detail)
 
 
 def collection_page(

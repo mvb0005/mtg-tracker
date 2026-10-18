@@ -1058,3 +1058,14 @@ body[data-identity] .deck-section-head { border-bottom: 0; padding-bottom: 6px; 
 .deck-notes-text { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 72ch; margin: 0 0 10px; line-height: 1.55; }
 .deck-notes-edit > summary { cursor: pointer; display: inline-block; margin-bottom: 8px; }
 .deck-notes-edit textarea { margin-bottom: 4px; }
+
+/* Record a purchase: the cart box, the money fields in a row, the preview ledger. */
+.purchase-form { align-items: stretch; max-width: 760px; }
+.purchase-form textarea { min-height: 14rem; }
+.purchase-form .field { width: auto; flex: 1 1 160px; }
+.purchase-form .field textarea, .purchase-form .field input { width: 100%; box-sizing: border-box; }
+.purchase-form .form-row { display: flex; flex-wrap: wrap; gap: 12px; }
+.purchase-form .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.resolution.pinned { color: var(--ok); }
+.resolution.needs { color: var(--away); }
+.reason { display: block; font-size: 0.8rem; color: var(--muted); }

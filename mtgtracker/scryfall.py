@@ -27,6 +27,12 @@ def _normalize(name: str) -> str:
     return name
 
 
+def name_keys(card_name: str) -> set[str]:
+    """A card name's normalized form and its front face's ("A // B" -> "a b",
+    "a"), so a double-faced card matches however a list or a lot spells it."""
+    return {_normalize(card_name), _normalize(card_name.split("//")[0])}
+
+
 def fetch_set_cards(set_code: str, *, use_cache: bool = True) -> list[dict]:
     """All printings in a set, via the search API (unique=prints)."""
     cache_path = CACHE_DIR / f"{set_code}.json"
@@ -51,6 +57,29 @@ def fetch_set_cards(set_code: str, *, use_cache: bool = True) -> list[dict]:
     cache_path.write_text(json.dumps(cards))
     invalidate_cache()
     return cards
+
+
+SETS_MAX_AGE = 24 * 3600  # a refresh is only offered for a cache older than this
+
+
+def fetch_sets(*, refresh: bool = False) -> list[dict]:
+    """Every Scryfall set (/sets: code, name, ...), cached as
+    CACHE_DIR/meta/sets.json. It lives in meta/ because cached_cards() and the
+    printings queue treat every CACHE_DIR/*.json as a list of cards. A cached
+    list is reused; refresh=True re-fetches it, but only when the cache is
+    older than SETS_MAX_AGE (so an unknown set name can't hammer Scryfall)."""
+    path = CACHE_DIR / "meta" / "sets.json"
+    if path.exists() and not (refresh and time.time() - path.stat().st_mtime > SETS_MAX_AGE):
+        return json.loads(path.read_text())
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    with httpx.Client(timeout=15) as client:
+        resp = client.get("https://api.scryfall.com/sets", headers=headers)
+    resp.raise_for_status()
+    sets = [{"code": s["code"], "name": s["name"], "set_type": s.get("set_type")}
+            for s in resp.json()["data"]]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(sets))
+    return sets
 
 
 class CardLookupError(Exception):

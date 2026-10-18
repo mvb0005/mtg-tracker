@@ -36,6 +36,21 @@ _BLOCKER_TEXT = {
 }
 
 
+def lot_blockers(conn: sqlite3.Connection, lot_filter: str, params: tuple) -> dict[str, int]:
+    """For the lots matched by `lot_filter` (a WHERE clause over `lots`), how
+    many are in each thing that forbids deleting them. Empty when none is."""
+    found = {}
+    for name, sql in _BLOCKERS.items():
+        n = conn.execute(f"{sql} WHERE {lot_filter}", params).fetchone()[0]
+        if n:
+            found[name] = n
+    return found
+
+
+def blockers_text(blockers: dict[str, int]) -> str:
+    return ", ".join(f"{n} {_BLOCKER_TEXT[k]}" for k, n in blockers.items())
+
+
 def get_import(conn: sqlite3.Connection, import_id: int) -> sqlite3.Row:
     row = conn.execute(
         "SELECT collection_imports.*, users.display_name AS owner_name FROM collection_imports"
@@ -60,14 +75,9 @@ def delete_import(
     count = conn.execute(
         "SELECT COUNT(*) FROM lots WHERE collection_import_id = ?", (import_id,)
     ).fetchone()[0]
-    blockers = {}
-    for name, sql in _BLOCKERS.items():
-        n = conn.execute(f"{sql} WHERE lots.collection_import_id = ?", (import_id,)).fetchone()[0]
-        if n:
-            blockers[name] = n
+    blockers = lot_blockers(conn, "lots.collection_import_id = ?", (import_id,))
     if blockers:
-        detail = ", ".join(f"{n} {_BLOCKER_TEXT[k]}" for k, n in blockers.items())
-        raise ImportInUseError(f"Can't undo that import: {detail}", blockers=blockers)
+        raise ImportInUseError(f"Can't undo that import: {blockers_text(blockers)}", blockers=blockers)
     preview = {
         "action": "delete_import", "import_id": imp["id"], "owner_id": imp["owner_id"],
         "owner": imp["owner_name"], "filename": imp["original_filename"], "format": imp["format"],

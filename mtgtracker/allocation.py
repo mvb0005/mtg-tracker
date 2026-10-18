@@ -16,7 +16,7 @@ class AlreadyDisposedError(Exception):
     """Raised when allocation is re-run on a product with a disposed lot."""
 
 
-def allocate(conn: sqlite3.Connection, product_id: int) -> list[int]:
+def allocate(conn: sqlite3.Connection, product_id: int, *, commit: bool = True) -> list[int]:
     """Allocate a product's cost basis evenly across its lots.
 
     Returns the list of lot ids in the order their allocated_cost_cents was
@@ -60,6 +60,7 @@ def allocate(conn: sqlite3.Connection, product_id: int) -> list[int]:
             "UPDATE lots SET allocated_cost_cents = ? WHERE id = ?",
             (share, lot_id),
         )
-    conn.commit()
+    if commit:
+        conn.commit()
 
     return lot_ids

@@ -76,7 +76,12 @@ def get_transaction(conn: sqlite3.Connection, transaction_id: int) -> dict | Non
         " WHERE transaction_id = ? ORDER BY imported_at",
         (transaction_id,),
     ).fetchall()
-    return {"txn": txn, "products": products, "receipts": receipts}
+    lots = conn.execute(
+        "SELECT id, product_id, card_name, set_code, collector_number, finish, allocated_cost_cents, notes,"
+        " scryfall_id FROM lots WHERE transaction_id = ? ORDER BY id",
+        (transaction_id,),
+    ).fetchall()
+    return {"txn": txn, "products": products, "receipts": receipts, "lots": lots}
 
 
 def list_decks(conn: sqlite3.Connection, owner_id: int) -> list[dict]:
@@ -243,7 +248,7 @@ def get_deck(
 def _name_keys(card_name: str) -> set[str]:
     """A card's normalized name and its front face's ("A // B" -> "a b", "a"),
     so a double-faced card matches however a list or a lot spells it."""
-    return {scryfall._normalize(card_name), scryfall._normalize(card_name.split("//")[0])}
+    return scryfall.name_keys(card_name)
 
 
 class FriendCopies:

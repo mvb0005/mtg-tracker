@@ -2,7 +2,8 @@
 {% set active = "transactions" %}
 {% block title %}{{ txn.vendor }} {{ txn.order_number or "" }}{% endblock %}
 {% block content %}
-<p><a href="/transactions">← Purchases</a></p>
+<p><a href="/transactions">← Purchases</a></p>{% if notice %}
+{% include "_flash.html" %}{% endif %}
 <h1>{{ txn.vendor }}{% if txn.order_number %} <span class="subtle">#{{ txn.order_number }}</span>{% endif %}</h1>
 <dl class="meta">
   <dt>Date</dt><dd>{{ txn.created_at[:10] }}</dd>
@@ -44,5 +45,25 @@
 </ul>
 {% else %}
 <p class="subtle">None on file.</p>
+{% endif %}{% if txn.source == "manual" %}
+
+<h2>Cards</h2>
+<p class="subtle">Recorded by hand. These are in your collection, not in any deck until you put them there.</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Card</th><th>Printing</th><th>Finish</th><th class="num">Cost</th><th>Notes</th></tr></thead>
+  <tbody>
+  {% for lot in lots %}
+    <tr>
+      <td class="name">{{ lot.card_name }}</td>
+      <td>{% if lot.scryfall_id %}{{ lot.set_code | upper }} #{{ lot.collector_number }}{% else %}<a href="/printings">needs printing</a>{% endif %}</td>
+      <td>{{ lot.finish }}</td>
+      <td class="num">{{ lot.allocated_cost_cents | money(txn.currency) }}</td>
+      <td>{{ lot.notes or "" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
 {% endif %}
 {% endblock %}

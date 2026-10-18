@@ -158,6 +158,55 @@ def import_collection(
     typer.echo(summary.message())
 
 
+@app.command("record-purchase")
+def record_purchase(
+    path: Path = typer.Argument(..., help="Cart file: a store CSV, a checkout paste, or a plain list"),
+    vendor: str = typer.Option(..., "--vendor", help="Where it was bought"),
+    total: str = typer.Option(..., "--total", help="Total paid in dollars, e.g. 12.34"),
+    tax: str = typer.Option("0", "--tax", help="Tax in dollars"),
+    shipping: str = typer.Option("0", "--shipping", help="Shipping in dollars"),
+    date: str = typer.Option("", "--date", help="Purchase date YYYY-MM-DD (default: today)"),
+    user: str = typer.Option("", "--user", help="Email or id of the buyer (default: user 1)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be recorded; write nothing"),
+    db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db", help="SQLite database path"),
+):
+    """Record singles you bought as cards in the buyer's collection, with
+    their cost. Only the collection changes; no deck is touched."""
+    import httpx
+
+    from mtgtracker import purchases
+    from mtgtracker.importers import cart_text
+    from mtgtracker.money import format_cents, parse_cents
+
+    def cents(value: str, label: str) -> int:
+        try:
+            return parse_cents(value.strip().lstrip("$").replace(",", "") or "0")
+        except (ArithmeticError, ValueError):
+            raise typer.BadParameter(f"{label} {value!r} isn't an amount in dollars and cents") from None
+
+    conn = _connect(db_path)
+    owner_id = _user_id(conn, user)
+    try:
+        plan = purchases.plan(
+            conn, path.read_text(), owner_id=owner_id, vendor=vendor, date=date or None,
+            tax_cents=cents(tax, "--tax"), shipping_cents=cents(shipping, "--shipping"),
+            total_cents=cents(total, "--total"),
+        )
+        summary = purchases.summarize(plan) if dry_run else purchases.record(conn, plan)
+    except (purchases.PurchaseError, cart_text.CartParseError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise typer.BadParameter("couldn't reach Scryfall; nothing was recorded") from exc
+    for p in plan.lines:
+        where = f"{p.set_code.upper()} #{p.collector_number}" if p.pinned else f"needs printing ({p.reason})"
+        typer.echo(f"{p.line.qty} x {p.card_name}  {where}  {format_cents(p.cost_basis_cents)}")
+    for w in plan.wanted_by:
+        typer.echo(f"Wanted by {w['deck']}: {w['copies']} of these (nothing added to it)")
+    head = "Would record" if dry_run else f"Recorded purchase {summary.transaction_id}:"
+    typer.echo(f"{head} {summary.copies} cards on {summary.lines} lines, {format_cents(summary.total_cents)}"
+               f" ({summary.unpinned} need a printing).")
+
+
 @app.command("import-order")
 def import_order(
     path: Path = typer.Argument(..., help="Path to a .order file"),

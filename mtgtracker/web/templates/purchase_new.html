@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% set active = "transactions" %}
+{% block title %}Record a purchase{% endblock %}
+{% block content %}
+<p><a href="/transactions">← Purchases</a></p>
+<h1>Record a purchase</h1>
+{% include "_flash.html" %}
+<p class="subtle">Paste what you bought (a store CSV, a checkout page, or a list like <code>2 Sol Ring, $1.00</code>). The cards join your collection with their cost; nothing is added to a deck.</p>
+
+<form class="import-form purchase-form" method="post" action="/purchases/preview">
+  <label class="field">Cart
+    <textarea name="cart" rows="12" required spellcheck="false" placeholder="1 Adarkar Wastes, $0.59">{{ form.cart }}</textarea>
+  </label>
+  <div class="form-row">
+    <label class="field">Vendor <input type="text" name="vendor" required maxlength="120" value="{{ form.vendor }}"></label>
+    <label class="field">Date <input type="date" name="date" value="{{ form.date }}"></label>
+  </div>
+  <div class="form-row">
+    <label class="field">Tax ($) <input type="text" name="tax" inputmode="decimal" value="{{ form.tax }}" placeholder="0.00"></label>
+    <label class="field">Shipping ($) <input type="text" name="shipping" inputmode="decimal" value="{{ form.shipping }}" placeholder="0.00"></label>
+    <label class="field">Total paid ($) <input type="text" name="total" inputmode="decimal" required value="{{ form.total }}" placeholder="0.00"></label>
+  </div>
+  <div class="actions">
+    <button type="submit">Preview</button>
+    {% if plan %}<button type="submit" class="primary" formaction="/purchases">Record this purchase</button>{% endif %}
+  </div>
+</form>
+
+{% if plan %}
+<h2>Preview</h2>
+<dl class="ledger">
+  <div><dt>Lines</dt><dd>{{ summary.lines }}</dd></div>
+  <div><dt>Cards</dt><dd>{{ summary.copies }}</dd></div>
+  <div><dt>Subtotal</dt><dd>{{ plan.subtotal_cents | money }}</dd></div>
+  <div><dt>Tax</dt><dd>{{ plan.tax_cents | money }}</dd></div>
+  <div><dt>Shipping</dt><dd>{{ plan.shipping_cents | money }}</dd></div>
+  <div><dt>Total</dt><dd>{{ plan.total_cents | money }}</dd></div>
+  <div><dt>Need a printing</dt><dd>{{ summary.unpinned }}</dd></div>
+</dl>
+<p class="subtle">The lines add up to {{ plan.subtotal_cents | money }}; with tax and shipping that is {{ (plan.subtotal_cents + plan.tax_cents + plan.shipping_cents) | money }}, which matches what you paid. Tax and shipping are spread over the lines by price.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Card</th><th class="num">Qty</th><th>Printing</th><th class="num">Price</th><th class="num">Tax + shipping</th><th class="num">Per copy</th></tr></thead>
+  <tbody>
+  {% for p in plan.lines %}
+    <tr>
+      <td class="name">{{ p.card_name }}{% if p.line.finish != "nonfoil" %} <span class="tag">{{ p.line.finish }}</span>{% endif %}{% if p.line.notes %}<span class="reason">{{ p.line.notes }}</span>{% endif %}</td>
+      <td class="num">{{ p.line.qty }}</td>
+      <td>{% if p.pinned %}<span class="resolution pinned">{{ p.set_code | upper }} #{{ p.collector_number }}</span>{% else %}<span class="resolution needs">needs printing</span><span class="reason">{{ p.reason }}</span>{% endif %}</td>
+      <td class="num">{{ p.line.total_cents | money }}</td>
+      <td class="num">{{ p.share_cents | money }}</td>
+      <td class="num">{{ (p.copy_costs | min) | money }}{% if p.copy_costs | min != p.copy_costs | max %}–{{ (p.copy_costs | max) | money }}{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% if plan.wanted_by %}
+<h2>Decks that want these</h2>
+<p class="subtle">Nothing is added to a deck by recording a purchase; build or assemble the deck afterwards.</p>
+<ul>
+  {% for w in plan.wanted_by %}<li><a href="/decks/{{ w.deck_id }}">{{ w.deck }}</a>: {{ w.copies }} card{{ "s" if w.copies != 1 }} ({% for c in w.cards %}{{ c.name }}{% if c.copies > 1 %} ×{{ c.copies }}{% endif %}{{ ", " if not loop.last }}{% endfor %})</li>{% endfor %}
+</ul>
+{% endif %}
+{% endif %}
+{% endblock %}

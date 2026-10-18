@@ -73,6 +73,7 @@ Run `scripts/check_list.py` on any candidate list. It checks the count, singleto
 - **Apply the user's exceptions explicitly**, for example "over $5 only if it's about the deck's theme". Name each over-cap card and the reason it qualifies.
 - **For a store cart:** diff it against the intended list. Report missing cards, extra cards, cards the user already owns elsewhere, out-of-stock lines and markups. The total must reach exactly 100 including basics and borrowed cards.
 - **Cheaper routes:** TCGplayer Mass Entry plus cart Optimize is cheapest, Card Kingdom is a single seller, or split the order and buy the big-markup cards online. Ask the local store for a whole-deck discount. Proxy-test cards before buying expensive ones.
+- **After the user buys:** record it so the cards become owned lots with their cost: `POST /api/v1/purchases` with `{vendor, date, tax_cents, shipping_cents, total_cents, cart}` (the cart is the store CSV, the checkout text or a `2 Name, $1.25` list). Run it with `?dry_run=1` first and read the reconciliation, any `cards_not_found` names and which lines `needs_printing_because`; then post it for real. It only adds cards to the collection and never changes a deck (`wanted_by` says which decks want them); putting them in a deck is a separate step. An undo is `DELETE /api/v1/purchases/<id>` and needs a confirm.
 - **Shopping list format:** `N Name` per line, front face names only. That's the same as the app's `shopping.txt`.
 
 ## 5. Proposing and applying changes

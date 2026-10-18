@@ -464,6 +464,7 @@ def test_service_errors_still_surface_under_dry_run(world):
 RISKY_SAMPLES = {
     ("POST", "/people"): ADD,
     ("DELETE", "/api/v1/imports/{import_id}"): {},
+    ("DELETE", "/api/v1/purchases/{purchase_id}"): {},
 }
 
 
@@ -485,17 +486,25 @@ def _risky_routes(app):
 
 
 def _fill_path(world, path):
-    """Make the sample route's path concrete: an unused import of user 1."""
-    if "{import_id}" not in path:
-        return path
+    """Make the sample route's path concrete: an unused import (or manual
+    purchase) of user 1."""
     conn = db.connect(world["db_path"])
-    cur = conn.execute(
-        "INSERT INTO collection_imports (owner_id, sha256, original_filename, format, card_count,"
-        " imported_by, imported_at) VALUES (1, 'sample', 'sample.csv', 'ManaBox', 0, 1, 't')"
-    )
+    if "{import_id}" in path:
+        cur = conn.execute(
+            "INSERT INTO collection_imports (owner_id, sha256, original_filename, format, card_count,"
+            " imported_by, imported_at) VALUES (1, 'sample', 'sample.csv', 'ManaBox', 0, 1, 't')"
+        )
+        path = path.replace("{import_id}", str(cur.lastrowid))
+    if "{purchase_id}" in path:
+        cur = conn.execute(
+            "INSERT INTO transactions (vendor, created_at, updated_at, subtotal_cents, tax_cents,"
+            " total_cents, source, owner_id)"
+            " VALUES ('Sample', '2026-01-01', '2026-01-01', 0, 0, 0, 'manual', 1)"
+        )
+        path = path.replace("{purchase_id}", str(cur.lastrowid))
     conn.commit()
     conn.close()
-    return path.replace("{import_id}", str(cur.lastrowid))
+    return path
 
 
 def test_risky_registry_is_complete(world):

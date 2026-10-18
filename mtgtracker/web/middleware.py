@@ -25,8 +25,11 @@ def _audit(request: Request, response) -> None:
     must never break or change the response -- the write already happened --
     so any failure is logged and swallowed."""
     try:
-        if request.method in SAFE_METHODS or response.status_code >= 400 or deps.is_dry_run(request):
-            return  # a dry run changed nothing and leaves no audit row
+        if (
+            request.method in SAFE_METHODS or response.status_code >= 400 or deps.is_dry_run(request)
+            or getattr(request.state, "no_audit", False)
+        ):
+            return  # a dry run (or a POST that only previews) changed nothing and leaves no audit row
         query = parse_qs(urlsplit(response.headers.get("location", "")).query)
         if query.get("error"):
             return
