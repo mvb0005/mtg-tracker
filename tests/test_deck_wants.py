@@ -154,10 +154,10 @@ def test_pages_show_the_three_states(client, db_path, scryfall_api):
     assert "/printings/None" not in html
     assert "4 pull from other decks" in html
     assert "Need to acquire" in html
-    assert "To acquire</dt><dd>2</dd>" in html
+    assert "To buy</dt><dd>2</dd>" in html
 
     listing = client.get(f"/decks/{deck_id}", params={"view": "list"}).text
-    assert re.search(r'<li class="deck-row wanted"[^>]*>\s*<span class="deck-row-qty">1</span>\s*'
+    assert re.search(r'<li class="deck-row in-deck wanted"[^>]*>\s*<span class="deck-row-qty">1</span>\s*'
                      r'<span class="deck-row-name">Mystic Forge <span class="tag acquire">', listing)
 
     decks = client.get("/decks").text

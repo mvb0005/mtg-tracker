@@ -13,28 +13,45 @@
     {%- if deck.commander %}Led by <strong>{{ deck.commander }}</strong> · {% endif -%}
     {% if deck.version %}<a href="/decks/{{ deck.id }}/versions/{{ deck.version }}">Version {{ deck.version }}</a>{% else %}Not versioned yet{% endif %}
     · since {{ deck.created_at[:10] }}
-    {%- if can_edit %} · <a class="action-link" href="/decks/{{ deck.id }}/modify">Modify deck</a> · <a class="action-link" href="/decks/{{ deck.id }}/assemble">Assemble</a>{% endif %}
-    · <a class="action-link" href="/decks/{{ deck.id }}/export">Export</a>
   </p>
 </header>
 
 {% include "_flash.html" %}
+{% set ac = assembly_counts %}
+{% set to_buy = acquire | sum(attribute=1) %}
+{% set to_assemble = ac.fill + ac.swap + ac.equip + ac.pull %}
 <dl class="ledger">
   <div><dt>On list</dt><dd>{{ list_count }}</dd></div>
-  <div><dt>Equipped here</dt><dd>{{ equipped_count }}</dd></div>
-  {% if elsewhere_count %}<div><dt>In other decks</dt><dd>{{ elsewhere_count }}</dd></div>{% endif %}
-  {% if wanted_count %}<div><dt>To acquire</dt><dd>{{ wanted_count }}</dd></div>{% endif %}
-  {% if borrowable_count %}<div><dt>Friends have</dt><dd>{{ borrowable_count }}</dd></div>{% endif %}
-  {% if list_cost_cents is not none %}<div><dt>Cost basis</dt><dd>{{ list_cost_cents | money }}</dd></div>{% endif %}
+  <div><dt>Here</dt><dd>{{ equipped_count }}</dd></div>
+  {% if elsewhere_count %}<div><dt>Away</dt><dd>{{ elsewhere_count }}</dd></div>{% endif %}
+  {% if to_buy %}<div><dt>To buy</dt><dd>{{ to_buy }}</dd></div>{% endif %}
+  {% if borrowable_count %}<div><dt>Borrowable</dt><dd>{{ borrowable_count }}</dd></div>{% endif %}
+  {% if list_cost_cents is not none %}<div title="Sums the owned cards on this list, including ones lent to other decks, so a card on two lists counts toward both. Cards still to acquire aren't counted."><dt>Cost basis</dt><dd>{{ list_cost_cents | money }}</dd></div>{% endif %}
 </dl>
-{% if list_cost_cents is not none %}<p class="footnote">Cost basis sums the owned cards on this list, including ones lent to other decks, so a card on two lists counts toward both. Cards still to acquire aren't counted.</p>{% endif %}
+
+<nav class="deck-actions" aria-label="Deck actions">
+  {% if can_edit %}
+  <a class="btn{% if to_assemble %} primary{% endif %}" href="/decks/{{ deck.id }}/assemble">Assemble{% if to_assemble %} <span class="btn-count">{{ to_assemble }}</span>{% endif %}</a>
+  <a class="btn" href="/decks/{{ deck.id }}/modify">Modify</a>
+  {% endif %}
+  <a class="btn" href="/decks/{{ deck.id }}/export">Export</a>
+  {% if can_edit and to_assemble %}<span class="deck-actions-note subtle">From what you own:
+    {%- for n, word in [(ac.fill, "fill"), (ac.swap, "swap"), (ac.equip, "put in the deck"), (ac.pull, "pull from other decks")] if n %}{{ "," if not loop.first }} {{ n }} {{ word }}{% endfor %}.</span>
+  {% elif can_edit and not to_assemble and not acquire and not borrow_from %}<span class="deck-actions-note"><span class="tag ok">assembled</span> Every card on the list is in the deck.</span>
+  {% elif can_edit and not to_assemble %}<span class="deck-actions-note subtle">Nothing more to put together from what you own.</span>{% endif %}
+</nav>
 
 {% if can_edit %}
-<details class="deck-notes" id="notes"{% if deck.notes %} open{% endif %}>
-  <summary><h2>Notes</h2></summary>
-  {% if deck.notes %}<div class="deck-notes-text">{{ deck.notes }}</div>{% else %}<p class="subtle">No notes yet. Write down the plan, your rules for this deck (budget, what not to borrow) and why cards are in or out, so they're here next time.</p>{% endif %}
+{%- set note_lines = (deck.notes or "").strip().splitlines() -%}
+<details class="deck-notes" id="notes">
+  <summary>
+    <span class="deck-notes-label">Notes</span>
+    {% if note_lines %}<span class="deck-notes-first">{{ note_lines[0] }}</span><span class="deck-notes-more">Show all</span>
+    {% else %}<span class="deck-notes-first subtle">No notes yet</span><span class="deck-notes-more">Add notes</span>{% endif %}
+  </summary>
+  {% if deck.notes %}<div class="deck-notes-text">{{ deck.notes }}</div>{% else %}<p class="subtle">Write down the plan, your rules for this deck (budget, what not to borrow) and why cards are in or out, so they're here next time.</p>{% endif %}
   <details class="deck-notes-edit">
-    <summary class="action-link">{{ "Edit notes" if deck.notes else "Add notes" }}</summary>
+    <summary class="action-link">{{ "Edit notes" if deck.notes else "Write notes" }}</summary>
     <form method="post" action="/decks/{{ deck.id }}/notes">
       <textarea name="notes" rows="14" maxlength="20000" class="export-text">{{ deck.notes or "" }}</textarea>
       <div class="export-actions"><button type="submit" class="primary">Save notes</button><span class="subtle">Only you can see these.</span></div>
@@ -43,62 +60,8 @@
 </details>
 {% endif %}
 
-{% if pull_list %}
-<h2>Pull list</h2>
-<p class="subtle">From the assembly you just did: where each card was taken from.</p>
-<div class="reassemble">
-  {% for place in pull_list %}
-  <div class="checklist">
-    <div class="checklist-head">{% if place.deck_id is not none %}<a href="/decks/{{ place.deck_id }}">{{ place.name }}</a>{% else %}From {{ place.name }}{% endif %} <span class="subtle">· {{ place.total }}</span></div>
-    <ul>{% for i in place["items"] %}<li><span class="checklist-qty">1</span> {{ i.card_name }}{% if i.printing %} <span class="subtle">{{ i.printing }}</span>{% endif %} <span class="subtle">· {{ i.label }}</span></li>{% endfor %}</ul>
-  </div>
-  {% endfor %}
-</div>
-{% endif %}
-
-{% set ac = assembly_counts %}
-{% if can_edit or borrow_from or acquire %}
-<h2>Assemble</h2>
-{% if can_edit %}
-{% if ac.fill or ac.swap or ac.equip or ac.pull %}
-<p>From what you own you can put
-  {%- for n, word in [(ac.fill, "fill"), (ac.swap, "swap"), (ac.equip, "put in the deck"), (ac.pull, "pull from other decks")] if n %}{{ ", " if not loop.first }} {{ n }} {{ word }}{% endfor %}.
-  <a class="action-link" href="/decks/{{ deck.id }}/assemble">Assemble…</a></p>
-{% elif not acquire and not borrow_from %}
-<p><span class="tag ok">assembled</span> Every card on the list is in the deck.</p>
-{% else %}
-<p class="subtle">Nothing more to put together from what you own.</p>
-{% endif %}
-{% endif %}
-{% if borrow_from or acquire %}
-<div class="reassemble">
-  {% if borrow_from %}
-  <section>
-    <h3>Borrow from friends <span class="subtle">({{ borrowable_count }})</span></h3>
-    {% for f in borrow_from %}
-    <div class="checklist">
-      <div class="checklist-head"><a href="/people/{{ f.id }}/cards">{{ f.name }}</a> <span class="subtle">· {{ f.total }}</span></div>
-      <ul>{% for name, n in f.cards %}<li><span class="checklist-qty">{{ n }}</span> {{ name }}</li>{% endfor %}</ul>
-    </div>
-    {% endfor %}
-    {% if borrow_from | length > 1 %}<p class="footnote">A card more than one friend has is listed under each.</p>{% endif %}
-  </section>
-  {% endif %}
-  {% if acquire %}
-  <section>
-    <h3>{{ "Nobody has these" if borrow_from else "Need to acquire" }} <span class="subtle">({{ acquire | sum(attribute=1) }})</span></h3>
-    <div class="checklist">
-      <ul>{% for name, n in acquire %}<li><span class="checklist-qty">{{ n }}</span> {{ name }}</li>{% endfor %}</ul>
-    </div>
-  </section>
-  {% endif %}
-</div>
-{% endif %}
-{% endif %}
-
 {% if groups %}{% include "_deck_breakdown.html" %}{% endif %}
 
-<h2>Decklist</h2>
 {% if deck.format == "Commander" and can_edit %}
 <details class="commander-picker"{% if not deck.commander and can_edit %} open{% endif %}>
   <summary>{% if deck.commander %}Commander: <strong>{{ deck.commander }}</strong> · change{% else %}Choose a commander{% endif %}</summary>
@@ -147,4 +110,45 @@
   </div>
 </div>
 {% endif %}
+
+<div class="deck-secondary">
+{% if pull_list %}
+<h2>Pull list</h2>
+<p class="subtle">From the assembly you just did: where each card was taken from.</p>
+<div class="reassemble">
+  {% for place in pull_list %}
+  <div class="checklist">
+    <div class="checklist-head">{% if place.deck_id is not none %}<a href="/decks/{{ place.deck_id }}">{{ place.name }}</a>{% else %}From {{ place.name }}{% endif %} <span class="subtle">· {{ place.total }}</span></div>
+    <ul>{% for i in place["items"] %}<li><span class="checklist-qty">1</span> {{ i.card_name }}{% if i.printing %} <span class="subtle">{{ i.printing }}</span>{% endif %} <span class="subtle">· {{ i.label }}</span></li>{% endfor %}</ul>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if borrow_from or acquire %}
+<h2>Shopping and borrowing</h2>
+<div class="reassemble">
+  {% if borrow_from %}
+  <section>
+    <h3>Borrow from friends <span class="subtle">({{ borrowable_count }})</span></h3>
+    {% for f in borrow_from %}
+    <div class="checklist">
+      <div class="checklist-head"><a href="/people/{{ f.id }}/cards">{{ f.name }}</a> <span class="subtle">· {{ f.total }}</span></div>
+      <ul>{% for name, n in f.cards %}<li><span class="checklist-qty">{{ n }}</span> {{ name }}</li>{% endfor %}</ul>
+    </div>
+    {% endfor %}
+    {% if borrow_from | length > 1 %}<p class="footnote">A card more than one friend has is listed under each.</p>{% endif %}
+  </section>
+  {% endif %}
+  {% if acquire %}
+  <section>
+    <h3>{{ "Nobody has these" if borrow_from else "Need to acquire" }} <span class="subtle">({{ acquire | sum(attribute=1) }})</span></h3>
+    <div class="checklist">
+      <ul>{% for name, n in acquire %}<li><span class="checklist-qty">{{ n }}</span> {{ name }}</li>{% endfor %}</ul>
+    </div>
+  </section>
+  {% endif %}
+</div>
+{% endif %}
+</div>
 {% endblock %}

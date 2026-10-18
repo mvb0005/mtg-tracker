@@ -33,7 +33,7 @@
 {#- Just the card image (or placeholder) with qty/finish badges and panel
     data -- no links inside, so it can sit in a button (the replacement
     picker) or next to its own controls (change list, search results). -#}
-<figure class="tile{% if c.finish in ('foil', 'etched') %} foil{% endif %}" data-card='{{ panel_json(c, mode) }}'>
+<figure class="tile{% if mode == 'deck' %} in-deck{% endif %}{% if c.finish in ('foil', 'etched') %} foil{% endif %}" data-card='{{ panel_json(c, mode) }}'>
   <div class="tile-art">
     {% if c.art.image %}
       <img src="{{ c.art.image }}" alt="{{ c.card_name }}" loading="lazy" referrerpolicy="no-referrer">
@@ -47,14 +47,12 @@
 {% endmacro %}
 
 {% macro tile(c, mode) %}
-{#- Greyed out = not physically here: on a deck page, a card lent to another
-    deck (or in none); on the cards page, one that's been sold/traded/lost.
-    Where it actually is shows in the hover panel. -#}
-{#- Three states on a deck page: here (normal), in another deck (.away,
-    greyed) and not owned (.wanted: dashed outline, faded, "To acquire"). -#}
+{#- Greyed out (cards page only) = sold/traded/lost. On a deck page the state
+    is only a class (.away: in another deck, .wanted: not owned) plus the
+    panel's "where"; the tiles look normal and assembly cares. -#}
 {%- set away = (not c.equipped and not c.wanted) if mode == "deck" else c.disposition_type -%}
 {%- set friends = c.friends if c.friends is defined else [] -%}
-<figure class="tile{% if c.finish in ('foil', 'etched') %} foil{% endif %}{% if away %} away{% endif %}{% if c.wanted %} wanted{% endif %}{% if c.wanted and friends %} borrowable{% endif %}" data-card='{{ panel_json(c, mode) }}' tabindex="0"{% if friends %} title="{{ borrow_summary(friends) }}"{% endif %}>
+<figure class="tile{% if mode == 'deck' %} in-deck{% endif %}{% if c.finish in ('foil', 'etched') %} foil{% endif %}{% if away %} away{% endif %}{% if c.wanted %} wanted{% endif %}{% if c.wanted and friends %} borrowable{% endif %}" data-card='{{ panel_json(c, mode) }}' tabindex="0"{% if friends %} title="{{ borrow_summary(friends) }}"{% endif %}>
   <div class="tile-art">
     {% if c.art.image %}
       <img src="{{ c.art.image }}" alt="{{ c.card_name }}" loading="lazy" referrerpolicy="no-referrer">
@@ -94,7 +92,7 @@
       {% for c in rows %}
       {%- set away = (not c.equipped and not c.wanted) if mode == "deck" else c.disposition_type -%}
       {%- set friends = c.friends if c.friends is defined else [] -%}
-      <li class="deck-row{% if away %} away{% endif %}{% if c.wanted %} wanted{% endif %}{% if c.wanted and friends %} borrowable{% endif %}" data-card='{{ panel_json(c, mode) }}' tabindex="0"{% if friends %} title="{{ borrow_summary(friends) }}"{% endif %}>
+      <li class="deck-row{% if mode == 'deck' %} in-deck{% endif %}{% if away %} away{% endif %}{% if c.wanted %} wanted{% endif %}{% if c.wanted and friends %} borrowable{% endif %}" data-card='{{ panel_json(c, mode) }}' tabindex="0"{% if friends %} title="{{ borrow_summary(friends) }}"{% endif %}>
         <span class="deck-row-qty">{{ c.qty }}</span>
         <span class="deck-row-name">{{ c.card_name }}
           {%- if c.wanted and friends %} <span class="tag borrow">from {{ friends[0].name if friends | length == 1 else (friends | length) ~ " friends" }}</span>

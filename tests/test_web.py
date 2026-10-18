@@ -71,8 +71,8 @@ def test_deck_detail_groups_basics_and_shows_assembly(client, db_path):
     html = resp.text
     # 34 Islands collapse into one grouped row.
     assert re.search(r'<span class="deck-row-qty">34</span>\s*<span class="deck-row-name">Island', html)
-    # The borrowed Counterspell's row is greyed out; the panel data says where it is.
-    away_row = re.search(r'<li class="deck-row away" data-card=\'([^\']*)\'', html)
+    # The borrowed Counterspell row is flagged .away; the panel data says where it is.
+    away_row = re.search(r'<li class="deck-row in-deck away" data-card=\'([^\']*)\'', html)
     assert json.loads(away_row.group(1))["where"] == "Lent to Blue Pile"
     assert "1 pull from other decks" in html  # the assembly summary links to the Assemble page
     assert f'href="/decks/{keen}/assemble"' in html
@@ -590,7 +590,7 @@ def test_filters_and_sorting(client, db_path, cache_dir):
     assert shown == ["Counterspell"]
     assert f'href="/decks/{keen}?sort=name&amp;color=U&amp;view=list"' in html
     assert "Showing 1 of 100 cards" in html
-    assert "<h2>Breakdown</h2>" in html  # breakdown still covers the whole deck
+    assert '<details class="breakdown" id="breakdown">' in html  # breakdown still covers the whole deck
 
 
 def test_card_details_list_every_deck_with_counts(client, db_path):

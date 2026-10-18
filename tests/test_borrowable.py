@@ -78,7 +78,7 @@ def test_deck_page_flags_borrowable_cards(db_path, cache_dir):
     assert ">From 2 friends<" in html
     assert ">From Alex<" in html
     assert ">To acquire<" in html  # Mox Opal: nobody has one
-    assert "<dt>Friends have</dt><dd>3</dd>" in html
+    assert "<dt>Borrowable</dt><dd>3</dd>" in html
     assert "Borrow from friends" in html
     assert "Nobody has these" in html
     panel = next(

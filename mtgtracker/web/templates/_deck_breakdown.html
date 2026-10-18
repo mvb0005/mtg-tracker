@@ -5,8 +5,12 @@
    combination), so segments and swatches always match. Plain HTML; every mark has a hover title, and
    counts are always written out so color never carries meaning alone. #}
 {% set b = breakdown %}
-<details class="breakdown" open>
-  <summary><h2>Breakdown</h2></summary>
+<details class="breakdown" id="breakdown">
+  <summary>
+    <span class="deck-notes-label">Breakdown</span>
+    <span class="deck-notes-first">Curve · colors · types{% if b.curve_total %} <span class="subtle">· {{ b.curve_total }} spell{{ "s" if b.curve_total != 1 }}</span>{% endif %}</span>
+    <span class="breakdown-more"><span>Show</span></span>
+  </summary>
   <div class="breakdown-grid">
 
     <section class="breakdown-card" aria-labelledby="bd-curve">

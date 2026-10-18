@@ -469,9 +469,9 @@ img.mana { width: 1em; height: 1em; vertical-align: -0.12em; margin: 0 1px; }
 .card-panel-decks li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .card-panel-deck-count { color: var(--muted); font-variant-numeric: tabular-nums; }
 .tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
-.tile.away .tile-art img,
-.tile.away .tile-placeholder { filter: grayscale(1); opacity: 0.4; }
-.tile.away .tile-art:hover img { opacity: 0.65; }
+.tile.away:not(.in-deck) .tile-art img,
+.tile.away:not(.in-deck) .tile-placeholder { filter: grayscale(1); opacity: 0.4; }
+.tile.away:not(.in-deck) .tile-art:hover img { opacity: 0.65; }
 .tile-flag {
   position: absolute;
   left: 50%;
@@ -489,19 +489,8 @@ img.mana { width: 1em; height: 1em; vertical-align: -0.12em; margin: 0 1px; }
 .tile-flag:hover { text-decoration: none; filter: brightness(0.97); }
 
 /* Deck breakdown */
-.breakdown { margin: 0 0 8px; }
-.breakdown > summary { cursor: pointer; list-style: none; }
-.breakdown > summary::-webkit-details-marker { display: none; }
-.breakdown > summary h2 { display: flex; align-items: baseline; gap: 8px; }
-.breakdown > summary h2::after {
-  content: "Hide";
-  margin-left: auto;
-  font-family: var(--font-body);
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--accent);
-}
-.breakdown:not([open]) > summary h2::after { content: "Show"; }
+.breakdown { margin: 0 0 18px; }
+.breakdown[open] > .breakdown-grid, .breakdown[open] > summary { margin-bottom: 10px; }
 .breakdown-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
 .breakdown-card {
   border-top: 2px solid var(--rule);
@@ -576,8 +565,8 @@ img.mana { width: 1em; height: 1em; vertical-align: -0.12em; margin: 0 1px; }
 .deck-row-name .tag { margin-left: 4px; }
 .deck-row-cost { white-space: nowrap; display: inline-flex; gap: 1px; }
 .deck-row-cost img.mana { width: 15px; height: 15px; margin: 0; }
-.deck-row.away .deck-row-name, .deck-row.away .deck-row-qty { color: var(--muted); }
-.deck-row.away .deck-row-cost { opacity: 0.4; filter: grayscale(1); }
+.deck-row.away:not(.in-deck) .deck-row-name, .deck-row.away:not(.in-deck) .deck-row-qty { color: var(--muted); }
+.deck-row.away:not(.in-deck) .deck-row-cost { opacity: 0.4; filter: grayscale(1); }
 
 /* Catalog: shop-style filter sidebar + results (deck + cards pages) */
 .catalog {
@@ -955,14 +944,13 @@ body[data-identity] .ledger { border-top: 0; padding-top: 2px; background: var(-
 body[data-identity] .breakdown-card { border-top: 0; padding-top: 12px; background: var(--identity) top left / 100% 2px no-repeat; }
 body[data-identity] .deck-section-head { border-bottom: 0; padding-bottom: 6px; background: var(--identity) bottom left / 100% 2px no-repeat; }
 
-/* Cards a deck lists but you don't own yet ("to acquire"): dashed
-   outline and faded art -- distinct from .away (owned, in another deck). */
-.tile.wanted .tile-art { outline: 2px dashed var(--accent); outline-offset: 3px; }
-.tile.wanted .tile-art img, .tile.wanted .tile-placeholder { opacity: 0.38; filter: saturate(0.5); }
+/* Cards a deck lists but you don't own yet ("to acquire"): on deck pages
+   they look like any other card (the panel and assembly carry the state);
+   only the modify page's own wanted tiles keep the dashed, faded look. */
+.tile.wanted:not(.in-deck) .tile-art { outline: 2px dashed var(--accent); outline-offset: 3px; }
+.tile.wanted:not(.in-deck) .tile-art img, .tile.wanted:not(.in-deck) .tile-placeholder { opacity: 0.38; filter: saturate(0.5); }
 .tile-flag.acquire { background: var(--surface); color: var(--accent); border: 1px solid var(--accent); }
 .tag.acquire { color: var(--accent); border-color: var(--accent); border-style: dashed; }
-.deck-row.wanted .deck-row-name, .deck-row.wanted .deck-row-qty { color: var(--muted); font-style: italic; }
-.deck-row.wanted .deck-row-cost { opacity: 0.5; }
 /* Reassemble: physical checklists per source deck, and a shopping list. */
 .reassemble { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 8px 32px; }
 .reassemble h3 { margin: 0 0 8px; }
@@ -1006,7 +994,6 @@ body[data-identity] .deck-section-head { border-bottom: 0; padding-bottom: 6px; 
 .field input[type="file"] { padding: 6px 0; border: 0; background: none; }
 /* A card you don't own that a friend does: borrowable rather than to buy. */
 .tile-flag.borrow { background: var(--accent); color: var(--bg); border: 1px solid var(--accent); }
-.tile.wanted.borrowable .tile-art img, .tile.wanted.borrowable .tile-placeholder { opacity: 0.62; filter: saturate(0.8); }
 .tag.borrow { color: var(--accent); border-color: var(--accent); }
 .deck-row.borrowable .deck-row-name { font-style: normal; }
 .borrow-note { margin: 4px 0 0; font-size: 0.8rem; color: var(--accent); font-weight: 600; text-align: center; }
@@ -1052,9 +1039,33 @@ body[data-identity] .deck-section-head { border-bottom: 0; padding-bottom: 6px; 
 }
 .export-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 8px; }
 /* Deck notes: the owner's context for a deck, shown as written. */
-.deck-notes { margin: 0 0 8px; }
-.deck-notes > summary { cursor: pointer; list-style: none; }
-.deck-notes > summary::-webkit-details-marker { display: none; }
+.deck-notes, .breakdown { font-size: 0.9rem; }
+.deck-notes { margin: 0 0 18px; }
+.deck-notes > summary, .breakdown > summary { cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.deck-notes > summary::-webkit-details-marker, .breakdown > summary::-webkit-details-marker { display: none; }
+.deck-notes-label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); flex: none; }
+.deck-notes-first { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deck-notes-more, .breakdown-more { flex: none; color: var(--accent); font-weight: 600; }
+.deck-notes[open] > summary .deck-notes-more { display: none; }
+.deck-notes[open] > summary { margin-bottom: 10px; }
+.breakdown[open] > summary .breakdown-more::before { content: "Hide"; }
+.breakdown[open] > summary .breakdown-more span { display: none; }
+/* Action bar: squared accent buttons; Assemble is filled when there is work. */
+.deck-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 0 0 14px; }
+.btn { display: inline-block; padding: 8px 18px; border: 1px solid var(--accent); border-radius: var(--radius); color: var(--accent); background: transparent; font-weight: 600; text-decoration: none; }
+.btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); text-decoration: none; }
+.btn.primary { background: var(--accent); color: var(--bg); }
+.btn.primary:hover { background: var(--accent); filter: brightness(1.1); }
+.btn-count { margin-left: 4px; font-variant-numeric: tabular-nums; opacity: 0.85; }
+.deck-actions-note { font-size: 0.9rem; margin-left: 6px; }
+@media (max-width: 600px) {
+  /* Three buttons in one row on a phone; the note wraps below them. */
+  .deck-actions .btn { padding: 7px 12px; }
+  .deck-actions-note { flex-basis: 100%; margin-left: 0; }
+}
+/* Below the cards: pull list, checklists in a quieter register. */
+.deck-secondary { margin-top: 36px; }
+.deck-secondary h2 { font-size: 1.15rem; color: var(--muted); }
 .deck-notes-text { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 72ch; margin: 0 0 10px; line-height: 1.55; }
 .deck-notes-edit > summary { cursor: pointer; display: inline-block; margin-bottom: 8px; }
 .deck-notes-edit textarea { margin-bottom: 4px; }

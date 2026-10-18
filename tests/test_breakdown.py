@@ -87,7 +87,7 @@ def test_deck_page_renders_breakdown(client, db_path, cache_dir):
     conn.close()
 
     html = client.get(f"/decks/{keen}").text
-    assert "<h2>Breakdown</h2>" in html
+    assert '<details class="breakdown" id="breakdown">' in html
     assert 'title="1 card at mana value 1"' in html
     assert 'title="Blue: 1 (50%)"' in html
     assert 'title="Colorless: 1 (50%)"' in html
