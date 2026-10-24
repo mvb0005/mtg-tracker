@@ -123,9 +123,17 @@ def add_planned(conn: sqlite3.Connection, deck_id: int, name: str, *, commit: bo
         card = scryfall.fetch_named_card(name.strip())
     except scryfall.CardLookupError as exc:
         raise ChangeError(str(exc)) from exc
+    return add_planned_card(conn, deck_id, card["name"], card["id"], commit=commit)
+
+
+def add_planned_card(
+    conn: sqlite3.Connection, deck_id: int, name: str, scryfall_id: str | None, *, commit: bool = True
+) -> int:
+    """Queue a card you don't own yet that is already resolved (no lookup)."""
+    _deck(conn, deck_id)
     cur = conn.execute(
         "INSERT INTO deck_changes (deck_id, add_card_name, add_scryfall_id, created_at) VALUES (?, ?, ?, ?)",
-        (deck_id, card["name"], card["id"], _now()),
+        (deck_id, name, scryfall_id, _now()),
     )
     if commit:
         conn.commit()
@@ -211,9 +219,40 @@ def add_swap(
     return cur.lastrowid
 
 
+def pick_cut(
+    conn: sqlite3.Connection, deck_id: int, name: str, used_wants: set, used_lots: set
+) -> dict | None:
+    """The one entry on the list that cutting `name` means: a wanted card
+    first, then an owned copy that isn't physically here (cutting it moves
+    nothing), then one that is; lowest id first. Names match by front face,
+    and an entry in used_wants/used_lots is skipped. None if nothing is left."""
+    keys = _lot_keys(name)
+    for row in conn.execute("SELECT id, card_name FROM deck_wants WHERE deck_id = ? ORDER BY id", (deck_id,)):
+        if row["id"] not in used_wants and _lot_keys(row["card_name"]) & keys:
+            return {"want_id": row["id"]}
+    for row in conn.execute(
+        "SELECT lots.id, lots.card_name FROM deck_cards JOIN lots ON lots.id = deck_cards.lot_id"
+        " WHERE deck_cards.deck_id = ? ORDER BY deck_cards.equipped, lots.id", (deck_id,)
+    ):
+        if row["id"] not in used_lots and _lot_keys(row["card_name"]) & keys:
+            return {"lot_id": row["id"]}
+    return None
+
+
+def pending_cuts(conn: sqlite3.Connection, deck_id: int) -> tuple[set[int], set[int]]:
+    """(want ids, lot ids) that pending changes already replace."""
+    return _pending_wants(conn, deck_id), _pending_lots(conn, deck_id, "cut_lot_id")
+
+
 def remove_change(conn: sqlite3.Connection, deck_id: int, change_id: int, *, commit: bool = True) -> None:
+    """Drop a pending change. A suggestion accepted as this change is open
+    again (change ids are reused, so the link is cleared, not left dangling)."""
     _change(conn, deck_id, change_id)
     conn.execute("DELETE FROM deck_changes WHERE id = ?", (change_id,))
+    conn.execute(
+        "UPDATE deck_suggestions SET status = 'open', change_id = NULL, decided_at = NULL"
+        " WHERE deck_id = ? AND change_id = ?", (deck_id, change_id),
+    )
     if commit:
         conn.commit()
 

@@ -33,6 +33,7 @@
   {% if can_edit %}
   <a class="btn{% if to_assemble %} primary{% endif %}" href="/decks/{{ deck.id }}/assemble">Assemble{% if to_assemble %} <span class="btn-count">{{ to_assemble }}</span>{% endif %}</a>
   <a class="btn" href="/decks/{{ deck.id }}/modify">Modify</a>
+  {% if open_suggestions %}<a class="btn" href="/decks/{{ deck.id }}/suggestions">Suggestions <span class="btn-count">{{ open_suggestions }}</span></a>{% endif %}
   {% endif %}
   <a class="btn" href="/decks/{{ deck.id }}/export">Export</a>
   {% if can_edit and to_assemble %}<span class="deck-actions-note subtle">From what you own:

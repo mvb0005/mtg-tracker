@@ -912,6 +912,31 @@ body:has(.card-dialog[open]) { overflow: hidden; }
   .change-slot { width: auto; flex: 1; min-width: 0; }
   .change-arrow { padding-top: 14px; font-size: 1.2rem; }
 }
+/* Suggestions: per slot, the card on the list now, then each option with
+   its facts and reason, separated by rules (no boxes). */
+.suggest-ledger { margin-bottom: 8px; }
+.suggest-slot { padding-bottom: 8px; }
+.suggest-grid { display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: flex-start; }
+.suggest-current { width: var(--tile-min, 190px); display: flex; flex-direction: column; gap: 6px; }
+.suggest-facts { margin: 0; font-size: 0.85rem; }
+.suggest-options { list-style: none; margin: 0; padding: 0; flex: 1; min-width: min(100%, 420px); }
+.suggest-option {
+  display: grid; grid-template-columns: var(--tile-min, 190px) minmax(0, 1fr); gap: 12px 20px;
+  align-items: start; padding: 12px 0; border-top: 1px solid var(--border);
+}
+.suggest-option:first-child { border-top: 0; padding-top: 0; }
+.suggest-compare { border-collapse: collapse; font-size: 0.9rem; }
+.suggest-compare th { text-align: left; font-weight: 500; color: var(--muted); padding: 2px 14px 2px 0; white-space: nowrap; }
+.suggest-compare td { padding: 2px 10px 2px 0; }
+.suggest-reason { margin: 0; max-width: 60ch; }
+.change-actions form { margin: 0; }
+.suggest-decided { list-style: none; margin: 0; padding: 0; }
+.suggest-decided li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 0; border-top: 1px solid var(--border); }
+.suggest-decided form { margin: 0; }
+@media (max-width: 760px) {
+  .suggest-current { width: calc(50% - 12px); }
+  .suggest-option { grid-template-columns: minmax(0, 140px) minmax(0, 1fr); gap: 10px 12px; }
+}
 .import-form { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 .import-form p { margin: 0; }
 .import-form textarea {

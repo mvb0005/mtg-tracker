@@ -41,7 +41,8 @@ def test_take_makes_a_valid_gzipped_copy_with_a_sidecar(db_path, tmp_path):
     assert dump(copy) == dump(live)
     (info,) = points(db_path)
     seq = live.execute("SELECT MAX(seq) FROM changelog").fetchone()[0]
-    assert (info["changelog_seq"], info["user_version"], info["action"]) == (seq, 9, "people-add")
+    latest = len(db._migration_files())
+    assert (info["changelog_seq"], info["user_version"], info["action"]) == (seq, latest, "people-add")
     assert info["size"] == point.stat().st_size
 
 

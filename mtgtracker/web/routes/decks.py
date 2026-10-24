@@ -7,7 +7,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
-from mtgtracker import assembly, commanders, deckmods, users
+from mtgtracker import assembly, commanders, deckmods, suggestions, users
 from mtgtracker.services import ServiceError
 from mtgtracker.services import decks as deck_service
 from mtgtracker.web import filters, queries
@@ -56,8 +56,10 @@ def deck_detail(
         commanders.eligible(conn, deck_id) if can_edit and detail["deck"]["format"] == "Commander" else []
     )
     pull_list = assembly.decode_pull_list(conn, deck_id, pl) if can_edit and pl else []
+    open_suggestions = suggestions.open_count(conn, deck_id) if can_edit else 0
     return render(
         request, "deck_detail.html", view=view, notice=notice, error=error, pull_list=pull_list,
+        open_suggestions=open_suggestions,
         commander_options=commander_options, filters=card_filters, can_edit=can_edit,
         owner=users.get(conn, detail["deck"]["owner_id"]), **detail,
     )

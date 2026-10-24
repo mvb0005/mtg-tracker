@@ -80,7 +80,7 @@ def test_full_replay_equals_the_live_database(live, tmp_path, scryfall_api):  # 
     assert summary.final_seq == conn.execute("SELECT MAX(seq) FROM changelog").fetchone()[0]
     assert summary.applied > 50
     assert all(mine == live for mine, live in summary.counts.values())
-    assert copy.execute("PRAGMA user_version").fetchone()[0] == 9
+    assert copy.execute("PRAGMA user_version").fetchone()[0] == len(db._migration_files())
     # A faithful live DB: triggers are back and keep logging.
     assert db.ensure_changelog_triggers(copy) is False
     copy.execute("UPDATE decks SET notes = 'after' WHERE id = ?", (keen,))
@@ -137,15 +137,18 @@ def test_replay_across_a_migration(live, tmp_path, monkeypatch):
     summary = recover.recover(point, db_path, out)
     copy = db.connect(out)
     assert dump(copy) == dump(conn)
-    assert copy.execute("PRAGMA user_version").fetchone()[0] == 10
+    assert copy.execute("PRAGMA user_version").fetchone()[0] == len(db._migration_files())
     assert summary.fk_problems == []
     assert db.ensure_changelog_triggers(copy) is False  # new table's triggers exist, in sync
 
     # Stopping before the migration gives the old schema.
-    s_seq = conn.execute("SELECT seq FROM changelog WHERE op = 'S' AND after_json LIKE '%10%'").fetchone()[0]
+    s_seq = conn.execute(
+        "SELECT seq FROM changelog WHERE op = 'S' AND json_extract(after_json, '$.user_version') = ?",
+        (len(db._migration_files()),),
+    ).fetchone()[0]
     older = tmp_path / "older.db"
     recover.recover(point, db_path, older, until_seq=s_seq - 1)
-    assert db.connect(older).execute("PRAGMA user_version").fetchone()[0] == 9
+    assert db.connect(older).execute("PRAGMA user_version").fetchone()[0] == len(db._migration_files()) - 1
 
 
 def test_the_live_database_is_never_written(live, tmp_path):

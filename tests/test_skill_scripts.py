@@ -13,6 +13,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 import _api  # noqa: E402
 import apply_list  # noqa: E402
+import suggest  # noqa: E402
 import who_owns  # noqa: E402
 
 from tests.test_api import (  # noqa: E402
@@ -241,6 +242,21 @@ def test_who_owns_prints_one_line_per_card(world, capsys):  # noqa: F811
     assert lines[0].startswith("Counterspell: Alex: 1 in not in a deck; Owner: 1 in ")
     assert lines[1] == "Rhystic Study: Alex: 1 in Alex Blue"
     assert lines[2] == "No Such Card: nobody"
+
+
+def test_suggest_posts_a_themed_batch_then_lists_it(world, scryfall_api, tmp_path, capsys):  # noqa: F811
+    _use(system(world), world)
+    batch = tmp_path / "s.json"
+    batch.write_text('{"theme": "Cheap", "suggestions": [{"name": "Angel of Vitality", "replaces": "Island",'
+                     ' "reason": "why", "price_cents": 25}, {"name": "Island"}]}')
+    suggest.main([str(world["keen"]), str(batch), "--dry-run", "--no-prices"])
+    assert rows(world, "SELECT COUNT(*) FROM deck_suggestions") == [(0,)]
+    suggest.main([str(world["keen"]), str(batch), "--no-prices"])
+    suggest.main([str(world["keen"]), "--list"])
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith("DRY RUN: Suggested 1 card.")
+    assert "  skipped Island: already on the list" in out
+    assert out[-1] == "[open] Angel of Vitality for Island $0.25  (Cheap)"
 
 
 @pytest.mark.parametrize(("me_answer", "sends_act_for"), [

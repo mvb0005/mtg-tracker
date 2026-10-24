@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% set active = "decks" %}
+{% block title %}Suggestions for {{ deck.name }}{% endblock %}
+{% import "_card_tiles.html" as cards with context %}
+{% block body_class %}with-panel{% endblock %}
+{% block body_attrs %}{{ theme_attrs(identity) }}{% endblock %}
+{% block panel %}{% include "_card_panel.html" %}{% endblock %}
+{%- macro mv(n) -%}{{ "%g" | format(n) if n is not none else "?" }}{%- endmacro -%}
+{%- macro signed(n) -%}{% if n is none %}{% elif n > 0 %}+{{ "%g" | format(n) }}{% elif n < 0 %}−{{ "%g" | format(-n) }}{% else %}±0{% endif %}{%- endmacro -%}
+{% block content %}
+<p><a href="/decks/{{ deck.id }}">← {{ deck.name }}</a></p>
+<h1>Suggestions <span class="subtle">for {{ deck.name }}</span></h1>
+<p class="subtle">Cards proposed for this deck, each next to the card it would replace. Accept puts one on the <a href="/decks/{{ deck.id }}/modify">Modify</a> page as a card to acquire; nothing changes until you apply it there.{% if pending %} {{ pending }} change{{ "s" if pending != 1 }} waiting there now.{% endif %}</p>
+{% include "_flash.html" %}
+
+{% if not themes %}
+<p class="subtle">No open suggestions. Ask Claude for ideas and they'll show up here to compare.</p>
+{% endif %}
+
+{% for theme in themes %}
+<section class="suggest-theme">
+  <h2>{{ theme.title }}</h2>
+  <dl class="ledger suggest-ledger">
+    <div><dt>Open</dt><dd>{{ theme.summary.count }}</dd></div>
+    <div><dt>{{ "One per slot" if theme.summary.picks < theme.summary.count else "All of them" }}</dt><dd>{% if theme.summary.price_cents is not none %}{{ theme.summary.price_cents | money }}{% if theme.summary.unpriced %}<span class="subtle"> +{{ theme.summary.unpriced }} unpriced</span>{% endif %}{% else %}—{% endif %}</dd></div>
+    <div><dt>Mana value change</dt><dd>{{ signed(theme.summary.mv_delta) or "—" }}</dd></div>
+  </dl>
+  {% for slot in theme.slots %}
+  <div class="suggest-slot">
+    <h3>{% if slot.cut_card_name %}Replacing {{ slot.cut_card_name }}{% if slot["items"] | length > 1 %} <span class="subtle">· {{ slot["items"] | length }} options</span>{% endif %}{% else %}Additions <span class="subtle">· nothing replaced</span>{% endif %}</h3>
+    <div class="suggest-grid">
+      {% if slot.cut_row %}
+      <div class="suggest-current">
+        <div class="change-slot-label">On the list now</div>
+        {{ cards.card_face(slot.cut_row, "deck") }}
+        <p class="suggest-facts subtle">{{ slot.cut.mana_cost | mana_symbols }} <span>MV {{ mv(slot.cut.cmc) }}</span><br>{{ slot.cut.type_line or "" }}</p>
+      </div>
+      {% endif %}
+      <ol class="suggest-options">
+        {% for s in slot["items"] %}
+        <li class="suggest-option" id="suggestion-{{ s.id }}">
+          <div class="suggest-art">{{ cards.card_face(s.add_row, "cards") }}</div>
+          <div class="change-body">
+            <div class="change-title"><strong>{{ s.card_name }}</strong> {{ s.add.mana_cost | mana_symbols }}
+              {% if s.owned %}<span class="tag ok">you have {{ s.owned }}</span> <span class="subtle">in {{ s.owned_in | join(" and ") }}{% if s.owned_in != ["your collection"] %}; using it takes it from there{% endif %}</span>{% endif %}
+              {% if s.add_row.friends %}<span class="tag">a friend has it</span>{% endif %}
+            </div>
+            <table class="suggest-compare">
+              <tbody>
+                <tr><th scope="row">Mana value</th><td class="num">{{ mv(s.add.cmc) }}</td><td class="subtle">{% if s.mv_delta is not none %}{{ signed(s.mv_delta) }} vs {{ s.cut_card_name }}{% endif %}</td></tr>
+                <tr><th scope="row">Type</th><td colspan="2">{{ s.add.type_line or "—" }}</td></tr>
+                <tr><th scope="row">Price</th><td class="num">{{ s.price_cents | money if s.price_cents is not none else "—" }}</td><td class="subtle">{% if s.price_cents is not none %}cheapest paper{% endif %}</td></tr>
+              </tbody>
+            </table>
+            {% if s.reason %}<p class="suggest-reason">{{ s.reason }}</p>{% endif %}
+            <div class="change-actions">
+              <form method="post" action="/decks/{{ deck.id }}/suggestions/{{ s.id }}/accept"><button type="submit" class="primary">Accept</button></form>
+              <form method="post" action="/decks/{{ deck.id }}/suggestions/{{ s.id }}/dismiss"><button type="submit" class="link-button">Dismiss</button></form>
+              {% if s.suggested_by_name %}<span class="subtle">from {{ s.suggested_by_name }}</span>{% endif %}
+            </div>
+          </div>
+        </li>
+        {% endfor %}
+      </ol>
+    </div>
+  </div>
+  {% endfor %}
+</section>
+{% endfor %}
+
+{% if decided %}
+<h2>Decided</h2>
+<ul class="suggest-decided">
+  {% for s in decided %}
+  <li>
+    <span><strong>{{ s.card_name }}</strong>{% if s.cut_card_name %} <span class="subtle">for {{ s.cut_card_name }}</span>{% endif %}</span>
+    {% if s.state == "queued" %}<a class="tag ok" href="/decks/{{ deck.id }}/modify#change-{{ s.change_id }}">queued on Modify</a>
+    {% elif s.state == "applied" %}<a class="tag ok" href="/decks/{{ deck.id }}/versions/{{ s.applied_version }}">in v{{ s.applied_version }}</a>
+    {% else %}<span class="tag">dismissed</span>
+      <form method="post" action="/decks/{{ deck.id }}/suggestions/{{ s.id }}/reopen"><button type="submit" class="link-button">Reopen</button></form>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

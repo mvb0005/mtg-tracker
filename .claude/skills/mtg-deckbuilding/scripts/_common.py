@@ -9,6 +9,7 @@ import httpx
 
 from mtgtracker import scryfall
 from mtgtracker.importers.decklist_text import parse
+from mtgtracker.money import parse_cents
 
 BASICS = {"Plains", "Island", "Swamp", "Mountain", "Forest", "Wastes"}
 
@@ -58,6 +59,11 @@ def cheapest_usd(client: httpx.Client, name: str) -> float | None:
         return None
     usd = [float(p["prices"]["usd"]) for p in r.json().get("data", []) if p["prices"].get("usd")]
     return min(usd) if usd else None
+
+
+def to_cents(dollars: float | None) -> int | None:
+    """A Scryfall USD price (two decimals) as integer cents."""
+    return None if dollars is None else parse_cents(f"{dollars:.2f}")
 
 
 def scryfall_client() -> httpx.Client:

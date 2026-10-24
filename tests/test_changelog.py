@@ -62,7 +62,7 @@ def test_adding_a_column_regenerates_the_triggers(tmp_path, monkeypatch):
     conn = db.connect(tmp_path / "t.db")
     db.migrate(conn)
     extra_migrations(tmp_path, monkeypatch, "ALTER TABLE decks ADD COLUMN flavor TEXT;")
-    assert db.migrate(conn) == 10
+    assert db.migrate(conn) == len(db._migration_files())
     conn.execute("INSERT INTO decks (name, created_at, flavor) VALUES ('D', 't', 'spicy')")
     conn.commit()
     after = json.loads(log_rows(conn, tbl="decks")[-1]["after_json"])
@@ -123,7 +123,8 @@ def test_a_migration_logs_one_schema_row_and_no_row_noise(db_path, tmp_path, mon
     extra_migrations(tmp_path, monkeypatch, "UPDATE lots SET notes = 'migrated'; DELETE FROM deck_cards;")
     db.migrate(conn)
     new = log_rows(conn)[before:]
-    assert [(r["op"], json.loads(r["after_json"])) for r in new] == [("S", {"user_version": 10})]
+    latest = len(db._migration_files())
+    assert [(r["op"], json.loads(r["after_json"])) for r in new] == [("S", {"user_version": latest})]
     # And logging resumes afterwards.
     conn.execute("UPDATE lots SET notes = 'again' WHERE id = 1")
     conn.commit()

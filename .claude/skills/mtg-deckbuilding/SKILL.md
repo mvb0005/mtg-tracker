@@ -79,7 +79,11 @@ Run `scripts/check_list.py` on any candidate list. It checks the count, singleto
 
 ## 5. Proposing and applying changes
 
-1. **Propose swaps as a table:** Add | price | Replaces | why. Each change should fix a named gap or improve the engine. Keep the count at exactly 100.
+1. **Post proposals to the deck's Suggestions page** (`/decks/<id>/suggestions`) with `scripts/suggest.py DECK_ID FILE.json`, and also give a short table in chat: Add | price | Replaces | why. Each change should fix a named gap or improve the engine. Keep the count at exactly 100.
+   - First run `suggest.py DECK_ID --list`. Never re-suggest a dismissed card (the server skips them anyway), and treat dismissals as rejected cuts for the notes.
+   - Give each batch a short `theme` ("Low-cost creatures") so the user can compare a batch together, and a one or two sentence `reason` per card. Several options for the same `replaces` show side by side.
+   - Scryfall must know the card (unreleased spoilers are refused with `cards_not_found`).
+   - The user accepts on the page, which queues the change on the Modify page; they apply it there. While anything is queued, `apply_list.py` gets `pending_changes`, so don't also apply the same swaps through the API.
 2. **When the user agrees, change the live deck through the API.** Never write the database directly. Use `scripts/apply_list.py DECK_ID --target LIST`:
    - It diffs the deck against the target list (or takes explicit `--pairs`), then posts one request to `POST /api/v1/decks/<id>/changes` with `expect_version`. Each add is queued as a planned ("to acquire") change, paired with a cut, and everything is applied as **one version** with a note, all or nothing.
    - **It dry-runs first and prints the plan and the diff** (`?dry_run=1` runs the real code and rolls back, leaving no trace). Run it with `--plan` to stop there, show the swaps to the user, and apply only after they agree.
@@ -108,5 +112,6 @@ Keep the notes short and current. Edit stale lines rather than appending forever
 - `scripts/check_list.py LIST [--commander NAME]`: count, singleton rule, color identity, legality, slot counts, curve and pips. LIST is decklist text: `Commander` and `Deck` sections, `N Name` lines.
 - `scripts/prices.py [--cap 5] NAME... | -`: cheapest paper USD per card, the total, and anything over the cap.
 - `scripts/who_owns.py NAME... | -`: every owner's copies of each card, and where they are (via `/api/v1/cards/owners`).
+- `scripts/suggest.py DECK_ID FILE.json [--dry-run] [--no-prices] | DECK_ID --list`: post a themed batch of suggestions (prices looked up), or list them with their state.
 - `scripts/apply_list.py DECK_ID (--target LIST | --pairs JSON) [--plan] [--note TEXT]`: diff, dry run (printed), then apply as one version with `expect_version`, and verify.
 - `scripts/_api.py`: the small API client the scripts share (config from the environment or `.env`; `get`/`post`/`put`/`delete`; raises `ApiError`, or `ConfirmRequired` carrying the preview and token). Import it for any other API call.

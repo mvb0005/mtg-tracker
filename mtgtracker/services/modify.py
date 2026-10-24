@@ -90,21 +90,11 @@ class PureCuts(CodedError):
 
 
 def _pick_cut(conn: sqlite3.Connection, deck_id: int, name: str, used_wants: set, used_lots: set) -> dict:
-    """The one entry on the list that a `{"name": ...}` cut means: a wanted
-    card first, then an owned copy that isn't physically here (cutting it
-    moves nothing), then one that is; lowest id first. Names match by front
-    face, and an entry another cut already took is skipped."""
-    keys = deckmods._lot_keys(name)
-    for row in conn.execute("SELECT id, card_name FROM deck_wants WHERE deck_id = ? ORDER BY id", (deck_id,)):
-        if row["id"] not in used_wants and deckmods._lot_keys(row["card_name"]) & keys:
-            return {"want_id": row["id"]}
-    for row in conn.execute(
-        "SELECT lots.id, lots.card_name FROM deck_cards JOIN lots ON lots.id = deck_cards.lot_id"
-        " WHERE deck_cards.deck_id = ? ORDER BY deck_cards.equipped, lots.id", (deck_id,)
-    ):
-        if row["id"] not in used_lots and deckmods._lot_keys(row["card_name"]) & keys:
-            return {"lot_id": row["id"]}
-    raise ServiceError(f"{name} isn't on this deck's list (or every copy is already being cut)")
+    """The entry a `{"name": ...}` cut means (deckmods.pick_cut), or a refusal."""
+    cut = deckmods.pick_cut(conn, deck_id, name, used_wants, used_lots)
+    if cut is None:
+        raise ServiceError(f"{name} isn't on this deck's list (or every copy is already being cut)")
+    return cut
 
 
 def apply_batch(
