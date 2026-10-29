@@ -1,10 +1,11 @@
 """Deck suggestions over JSON: list them, add a batch (the system user's way
-of proposing cards to compare on /decks/{id}/suggestions), accept, dismiss,
-reopen. Owner only (friends get 403): reasons are deck strategy, like notes."""
+of proposing cards to compare on /decks/{id}/suggestions), vote, accept,
+dismiss, reopen. Owner only (friends get 403): reasons are deck strategy, like notes."""
 
 from __future__ import annotations
 
 import sqlite3
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -29,6 +30,12 @@ class SuggestionIn(BaseModel):
 class SuggestionsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     suggestions: list[SuggestionIn]
+
+
+class VoteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    vote: Literal["up", "down"]
+    note: str | None = None
 
 
 def _listing(conn: sqlite3.Connection, deck_id: int) -> dict:
@@ -88,3 +95,14 @@ def dismiss(deck_id: int, suggestion_id: int, request: Request, conn: sqlite3.Co
 @router.post("/decks/{deck_id}/suggestions/{suggestion_id}/reopen")
 def reopen(deck_id: int, suggestion_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     return _decide(request, conn, deck_id, suggestion_id, service.reopen)
+
+
+@router.post("/decks/{deck_id}/suggestions/{suggestion_id}/vote")
+def vote(
+    deck_id: int, suggestion_id: int, body: VoteIn, request: Request,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Thumbs up (stays open) or down (dismissed, so never suggested again),
+    with an optional note. Reopen clears the vote."""
+    return _decide(request, conn, deck_id, suggestion_id,
+                   lambda c, d, s, commit: service.vote(c, d, s, body.vote, body.note, commit=commit))

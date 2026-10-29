@@ -9,9 +9,14 @@ page, paired with its cut; nothing is applied from here. Dismissed
 suggestions are kept, so the same card isn't suggested again.
 
 State shown to the user is derived (`state`): "open", "queued" (accepted,
-its change still pending), "applied" (that change went into a version) or
-"dismissed". An accepted suggestion whose change was removed from the
-Modify page is open again.
+its change still pending), "applied" (that change went into a version),
+"on_list" (open, but the card has since reached the list some other way,
+e.g. a whole list applied over the API) or "dismissed". An accepted
+suggestion whose change was removed from the Modify page is open again.
+
+Votes are the swipe review (`/decks/{id}/suggestions/review`): a thumbs up
+or down with an optional note, the user's verdict for the suggester. Up
+keeps the suggestion open; down dismisses it. Reopen clears either.
 """
 
 from __future__ import annotations
@@ -25,6 +30,8 @@ MAX_BATCH = 50
 MAX_NAME = 200
 MAX_THEME = 80
 MAX_REASON = 2000
+MAX_NOTE = 2000
+VOTES = ("up", "down")
 
 
 class SuggestionError(ValueError):
@@ -35,6 +42,10 @@ class CardsNotFound(SuggestionError):
     def __init__(self, names: list[str]):
         super().__init__("Scryfall doesn't know: " + ", ".join(names))
         self.names = names
+
+
+def _label(suggestion: dict) -> str:
+    return suggestion["state"].replace("_", " ")
 
 
 def _now() -> str:
@@ -153,40 +164,40 @@ _SELECT = (
 )
 
 
-def _state(row: sqlite3.Row) -> str:
+def _state(row: sqlite3.Row, on_list: list[str]) -> str:
     if row["status"] == "dismissed":
         return "dismissed"
     if row["status"] == "accepted" and row["live_change_id"] is not None:
         return "queued" if row["applied_version"] is None else "applied"
+    if _matching(row["card_name"], on_list):
+        return "on_list"
     return "open"
 
 
-def _as_dict(row: sqlite3.Row) -> dict:
+def _as_dict(row: sqlite3.Row, on_list: list[str]) -> dict:
     return {
         "id": row["id"], "deck_id": row["deck_id"], "card_name": row["card_name"],
         "scryfall_id": row["scryfall_id"], "cut_card_name": row["cut_card_name"], "theme": row["theme"],
         "reason": row["reason"], "price_cents": row["price_cents"], "suggested_by": row["suggested_by"],
-        "suggested_by_name": row["suggested_by_name"], "state": _state(row),
+        "suggested_by_name": row["suggested_by_name"], "state": _state(row, on_list),
         "change_id": row["live_change_id"], "applied_version": row["applied_version"],
         "created_at": row["created_at"], "decided_at": row["decided_at"],
+        "vote": row["vote"], "vote_note": row["vote_note"], "voted_at": row["voted_at"],
     }
 
 
 def list_for(conn: sqlite3.Connection, deck_id: int) -> list[dict]:
     """Every suggestion for the deck, oldest first."""
     rows = conn.execute(_SELECT + " WHERE s.deck_id = ? ORDER BY s.id", (deck_id,)).fetchall()
-    return [_as_dict(r) for r in rows]
-
-
-def open_count(conn: sqlite3.Connection, deck_id: int) -> int:
-    return sum(1 for s in list_for(conn, deck_id) if s["state"] == "open")
+    on_list = _list_names(conn, deck_id)
+    return [_as_dict(r, on_list) for r in rows]
 
 
 def get(conn: sqlite3.Connection, deck_id: int, suggestion_id: int) -> dict:
     row = conn.execute(_SELECT + " WHERE s.id = ? AND s.deck_id = ?", (suggestion_id, deck_id)).fetchone()
     if row is None:
         raise SuggestionError("no such suggestion for this deck")
-    return _as_dict(row)
+    return _as_dict(row, _list_names(conn, deck_id))
 
 
 def accept(conn: sqlite3.Connection, deck_id: int, suggestion_id: int, *, commit: bool = True) -> int:
@@ -195,7 +206,7 @@ def accept(conn: sqlite3.Connection, deck_id: int, suggestion_id: int, *, commit
     the change id."""
     suggestion = get(conn, deck_id, suggestion_id)
     if suggestion["state"] != "open":
-        raise SuggestionError(f"{suggestion['card_name']} is already {suggestion['state']}")
+        raise SuggestionError(f"{suggestion['card_name']} is already {_label(suggestion)}")
     cut = None
     if suggestion["cut_card_name"]:
         used_wants, used_lots = deckmods.pending_cuts(conn, deck_id)
@@ -228,7 +239,7 @@ def accept(conn: sqlite3.Connection, deck_id: int, suggestion_id: int, *, commit
 def dismiss(conn: sqlite3.Connection, deck_id: int, suggestion_id: int, *, commit: bool = True) -> None:
     suggestion = get(conn, deck_id, suggestion_id)
     if suggestion["state"] != "open":
-        raise SuggestionError(f"{suggestion['card_name']} is {suggestion['state']}, not open")
+        raise SuggestionError(f"{suggestion['card_name']} is {_label(suggestion)}, not open")
     conn.execute(
         "UPDATE deck_suggestions SET status = 'dismissed', change_id = NULL, decided_at = ? WHERE id = ?",
         (_now(), suggestion_id),
@@ -237,12 +248,52 @@ def dismiss(conn: sqlite3.Connection, deck_id: int, suggestion_id: int, *, commi
         conn.commit()
 
 
-def reopen(conn: sqlite3.Connection, deck_id: int, suggestion_id: int, *, commit: bool = True) -> None:
+def vote(
+    conn: sqlite3.Connection, deck_id: int, suggestion_id: int, verdict: str, note: str | None = None,
+    *, commit: bool = True,
+) -> dict:
+    """Thumbs up (stays open) or down (dismissed), with an optional note.
+    A vote can be changed, but not on a suggestion that's queued, applied
+    or already on the list: that's decided on the Modify page."""
+    if verdict not in VOTES:
+        raise SuggestionError("vote must be up or down")
+    note = _text({"note": note}, "note", MAX_NOTE)
     suggestion = get(conn, deck_id, suggestion_id)
-    if suggestion["state"] != "dismissed":
-        raise SuggestionError(f"{suggestion['card_name']} isn't dismissed")
+    if suggestion["state"] not in ("open", "dismissed"):
+        raise SuggestionError(f"{suggestion['card_name']} is already {_label(suggestion)}")
+    now = _now()
     conn.execute(
-        "UPDATE deck_suggestions SET status = 'open', decided_at = NULL WHERE id = ?", (suggestion_id,)
+        "UPDATE deck_suggestions SET status = ?, change_id = NULL, decided_at = ?,"
+        " vote = ?, vote_note = ?, voted_at = ? WHERE id = ?",
+        ("open" if verdict == "up" else "dismissed", None if verdict == "up" else now,
+         verdict, note, now, suggestion_id),
+    )
+    if commit:
+        conn.commit()
+    return get(conn, deck_id, suggestion_id)
+
+
+def to_review(conn: sqlite3.Connection, deck_id: int) -> list[dict]:
+    """Open suggestions without a vote, in the order they were suggested
+    (so a batch's theme stays together)."""
+    return [s for s in list_for(conn, deck_id) if s["state"] == "open" and s["vote"] is None]
+
+
+def last_voted(conn: sqlite3.Connection, deck_id: int) -> dict | None:
+    """The most recent vote that can still be undone (by reopen)."""
+    voted = [s for s in list_for(conn, deck_id)
+             if s["vote"] is not None and s["state"] in ("open", "dismissed")]
+    return max(voted, key=lambda s: (s["voted_at"], s["id"]), default=None)
+
+
+def reopen(conn: sqlite3.Connection, deck_id: int, suggestion_id: int, *, commit: bool = True) -> None:
+    """Back to open and unvoted: undoes a dismiss or either vote."""
+    suggestion = get(conn, deck_id, suggestion_id)
+    if suggestion["state"] != "dismissed" and not (suggestion["state"] == "open" and suggestion["vote"]):
+        raise SuggestionError(f"{suggestion['card_name']} isn't dismissed or voted on")
+    conn.execute(
+        "UPDATE deck_suggestions SET status = 'open', decided_at = NULL,"
+        " vote = NULL, vote_note = NULL, voted_at = NULL WHERE id = ?", (suggestion_id,)
     )
     if commit:
         conn.commit()

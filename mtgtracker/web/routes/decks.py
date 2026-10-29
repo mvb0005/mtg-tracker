@@ -56,10 +56,12 @@ def deck_detail(
         commanders.eligible(conn, deck_id) if can_edit and detail["deck"]["format"] == "Commander" else []
     )
     pull_list = assembly.decode_pull_list(conn, deck_id, pl) if can_edit and pl else []
-    open_suggestions = suggestions.open_count(conn, deck_id) if can_edit else 0
+    listed = suggestions.list_for(conn, deck_id) if can_edit else []
+    open_suggestions = [s for s in listed if s["state"] == "open"]
     return render(
         request, "deck_detail.html", view=view, notice=notice, error=error, pull_list=pull_list,
-        open_suggestions=open_suggestions,
+        open_suggestions=len(open_suggestions),
+        to_review=sum(1 for s in open_suggestions if s["vote"] is None),
         commander_options=commander_options, filters=card_filters, can_edit=can_edit,
         owner=users.get(conn, detail["deck"]["owner_id"]), **detail,
     )

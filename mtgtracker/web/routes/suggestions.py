@@ -1,5 +1,7 @@
 """Suggested cards for a deck (owner only): compare each against the card it
-would replace, then accept it onto the Modify page or dismiss it."""
+would replace, then accept it onto the Modify page or dismiss it. The
+review page shows one unvoted suggestion at a time for a thumbs up or down
+(swipe on a phone, arrow keys elsewhere), with an optional note."""
 
 from __future__ import annotations
 
@@ -92,29 +94,80 @@ def deck_suggestions(
         request, "deck_suggestions.html", can_edit=True, deck=deck,
         identity=queries.deck_identities(conn).get(deck_id, ()),
         themes=theme_list, open_count=len(open_items), decided=decided,
+        to_review=sum(1 for s in open_items if s["vote"] is None),
         pending=len(deckmods.pending_changes(conn, deck_id)), notice=notice, error=error,
     )
 
 
-def _act(request: Request, conn: sqlite3.Connection, deck_id: int, action: Callable[[], str]):
+@router.get("/decks/{deck_id}/suggestions/review", response_class=HTMLResponse)
+def review(
+    deck_id: int, request: Request, notice: str = "", error: str = "",
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    user = me(request)
+    deck = require_own_deck(conn, deck_id, user)
+    queue = suggestions.to_review(conn, deck_id)
+    everything = suggestions.list_for(conn, deck_id)
+    voted = [s for s in everything if s["vote"]]
+    card = None
+    if queue:
+        s = queue[0]
+        art = cardinfo.lookup(s["scryfall_id"], s["card_name"], "nonfoil")
+        owned = deckmods.owned_copies_of(conn, deck_id, s["card_name"])
+        card = {
+            **s, "art": art, "facts": _facts(art),
+            "owned": sum(c["qty"] for c in owned),
+            "owned_in": sorted({c["holder_name"] or "your collection" for c in owned}),
+            "friends": queries.FriendCopies(conn, {user.id})(s["card_name"]),
+        }
+    return render(
+        request, "deck_review.html", can_edit=True, deck=deck,
+        identity=queries.deck_identities(conn).get(deck_id, ()),
+        card=card, left=len(queue), done=len(voted), liked=sum(1 for s in voted if s["vote"] == "up"),
+        last=suggestions.last_voted(conn, deck_id), notice=notice, error=error,
+    )
+
+
+def _back(deck_id: int, form) -> str:
+    """Where a form goes after acting: the review page or the list."""
+    tail = "/review" if form.get("back") == "review" else ""
+    return f"/decks/{deck_id}/suggestions{tail}"
+
+
+async def _act(request: Request, conn: sqlite3.Connection, deck_id: int, action: Callable[[dict], str]):
     require_own_deck(conn, deck_id, me(request))
+    form = await request.form()
     try:
-        notice = action()
+        notice = action(form)
     except ServiceError as exc:
-        return redirect(f"/decks/{deck_id}/suggestions", error=str(exc))
-    return redirect(f"/decks/{deck_id}/suggestions", notice=notice)
+        return redirect(_back(deck_id, form), error=str(exc))
+    return redirect(_back(deck_id, form), notice=notice)
+
+
+@router.post("/decks/{deck_id}/suggestions/{suggestion_id}/vote")
+async def vote(
+    deck_id: int, suggestion_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+):
+    return await _act(request, conn, deck_id, lambda form: service.vote(
+        conn, deck_id, suggestion_id, str(form.get("vote", "")), str(form.get("note", ""))))
 
 
 @router.post("/decks/{deck_id}/suggestions/{suggestion_id}/accept")
-def accept(deck_id: int, suggestion_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    return _act(request, conn, deck_id, lambda: service.accept(conn, deck_id, suggestion_id))
+async def accept(
+    deck_id: int, suggestion_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+):
+    return await _act(request, conn, deck_id, lambda form: service.accept(conn, deck_id, suggestion_id))
 
 
 @router.post("/decks/{deck_id}/suggestions/{suggestion_id}/dismiss")
-def dismiss(deck_id: int, suggestion_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    return _act(request, conn, deck_id, lambda: service.dismiss(conn, deck_id, suggestion_id))
+async def dismiss(
+    deck_id: int, suggestion_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+):
+    return await _act(request, conn, deck_id, lambda form: service.dismiss(conn, deck_id, suggestion_id))
 
 
 @router.post("/decks/{deck_id}/suggestions/{suggestion_id}/reopen")
-def reopen(deck_id: int, suggestion_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    return _act(request, conn, deck_id, lambda: service.reopen(conn, deck_id, suggestion_id))
+async def reopen(
+    deck_id: int, suggestion_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+):
+    return await _act(request, conn, deck_id, lambda form: service.reopen(conn, deck_id, suggestion_id))

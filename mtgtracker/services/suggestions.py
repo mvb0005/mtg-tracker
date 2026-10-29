@@ -1,5 +1,5 @@
-"""Deck suggestions: add a batch, accept one onto the Modify page, dismiss
-or reopen. The caller has already run require_own_deck."""
+"""Deck suggestions: add a batch, accept one onto the Modify page, vote,
+dismiss or reopen. The caller has already run require_own_deck."""
 
 from __future__ import annotations
 
@@ -59,4 +59,13 @@ def reopen(conn: sqlite3.Connection, deck_id: int, suggestion_id: int, *, commit
     with _errors():
         name = suggestions.get(conn, deck_id, suggestion_id)["card_name"]
         suggestions.reopen(conn, deck_id, suggestion_id, commit=commit)
-    return f"{name} is open again."
+    return f"{name} is open again, with no vote."
+
+
+def vote(
+    conn: sqlite3.Connection, deck_id: int, suggestion_id: int, verdict: str, note: str | None = None,
+    *, commit: bool = True,
+) -> str:
+    with _errors():
+        name = suggestions.vote(conn, deck_id, suggestion_id, verdict, note, commit=commit)["card_name"]
+    return f"Liked {name}." if verdict == "up" else f"Passed on {name}."

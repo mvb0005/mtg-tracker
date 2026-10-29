@@ -181,3 +181,85 @@ def test_owned_copy_in_another_deck_says_where(world, scryfall_api):
     assert _suggest(client, keen, {"name": name}).status_code == 201
     html = client.get(f"/decks/{keen}/suggestions").text
     assert "in Reign of Dragons; using it takes it from there" in html
+
+
+def test_votes_leave_the_deck_alone_and_can_be_changed(world, scryfall_api):
+    client, keen = person(world), world["keen"]
+    up, down = _suggest(client, keen, {"name": ANGEL}, {"name": LYRA}).json()["created"]
+    before = _deck_state(client, keen)
+    snap = snapshot(world)
+    dry = client.post(f"{API}/decks/{keen}/suggestions/{up}/vote", params={"dry_run": 1}, json={"vote": "up"})
+    assert dry.status_code == 200, dry.text
+    assert snapshot(world) == snap  # a dry run writes nothing
+
+    liked = client.post(f"{API}/decks/{keen}/suggestions/{up}/vote", json={"vote": "up", "note": "Lifegain!"})
+    assert liked.status_code == 200, liked.text
+    s = liked.json()["suggestion"]
+    assert (s["state"], s["vote"], s["vote_note"]) == ("open", "up", "Lifegain!")
+    passed = client.post(f"{API}/decks/{keen}/suggestions/{down}/vote", json={"vote": "down"}).json()
+    assert (passed["suggestion"]["state"], passed["suggestion"]["vote"]) == ("dismissed", "down")
+    assert _deck_state(client, keen) == before  # votes never touch the list
+    # A passed card isn't suggested again; a vote can flip either way.
+    assert _suggest(system(world), keen, {"name": LYRA}).json()["skipped"][0]["reason"] == "dismissed before"
+    flipped = client.post(f"{API}/decks/{keen}/suggestions/{down}/vote", json={"vote": "up"}).json()
+    assert (flipped["suggestion"]["state"], flipped["suggestion"]["vote_note"]) == ("open", None)
+    # Reopen (the review page's undo) clears a like too.
+    reopened = client.post(f"{API}/decks/{keen}/suggestions/{up}/reopen").json()["suggestion"]
+    assert (reopened["state"], reopened["vote"], reopened["vote_note"]) == ("open", None, None)
+    bad = client.post(f"{API}/decks/{keen}/suggestions/{up}/vote", json={"vote": "maybe"})
+    assert bad.status_code == 422
+    # A queued suggestion can't be voted on.
+    client.post(f"{API}/decks/{keen}/suggestions/{up}/accept")
+    assert client.post(f"{API}/decks/{keen}/suggestions/{up}/vote", json={"vote": "down"}).status_code == 422
+
+
+def test_friends_cannot_vote_or_review(world, scryfall_api):
+    keen = world["keen"]
+    sid = _suggest(person(world), keen, {"name": ANGEL}).json()["created"][0]
+    friend = person(world, world["friend"].id)
+    assert friend.post(f"{API}/decks/{keen}/suggestions/{sid}/vote", json={"vote": "up"}).status_code == 403
+    assert friend.get(f"/decks/{keen}/suggestions/review").status_code == 403
+    assert friend.post(f"/decks/{keen}/suggestions/{sid}/vote", data={"vote": "up"}).status_code == 403
+
+
+def test_review_page_walks_through_and_undoes(world, scryfall_api):
+    client, keen = person(world), world["keen"]
+    a, b = _suggest(client, keen, {"name": ANGEL, "reason": "Gains life <b>", "theme": "Lifegain",
+                                   "price_cents": 150}, {"name": LYRA}).json()["created"]
+    deck_page = client.get(f"/decks/{keen}").text
+    assert f"/decks/{keen}/suggestions/review" in deck_page  # unreviewed: the button goes to review
+    html = client.get(f"/decks/{keen}/suggestions/review").text
+    expected = (ANGEL, "Lifegain", "$1.50", "Gains life &lt;b&gt;", f"/suggestions/{a}/vote", "review.js?v=")
+    for text in expected:
+        assert text in html
+    form = {"vote": "up", "note": "yes", "back": "review"}
+    resp = client.post(f"/decks/{keen}/suggestions/{a}/vote", data=form, follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"].startswith(f"/decks/{keen}/suggestions/review?notice=")
+    html = client.get(f"/decks/{keen}/suggestions/review").text
+    assert f"/suggestions/{b}/vote" in html  # the next card
+    assert f"Last: liked {ANGEL} (yes)." in html
+    client.post(f"/decks/{keen}/suggestions/{b}/vote", data={"vote": "down", "back": "review"})
+    html = client.get(f"/decks/{keen}/suggestions/review").text
+    assert "Every suggestion is reviewed." in html
+    # Undo the last vote: Lyra is up for review again.
+    client.post(f"/decks/{keen}/suggestions/{b}/reopen", data={"back": "review"})
+    assert f"/suggestions/{b}/vote" in client.get(f"/decks/{keen}/suggestions/review").text
+    listing = client.get(f"/decks/{keen}/suggestions").text
+    assert "liked" in listing
+    assert "Review" in listing
+
+
+def test_a_liked_card_that_reaches_the_list_is_on_list(world, scryfall_api):
+    client, keen = person(world), world["keen"]
+    sid = _suggest(client, keen, {"name": ANGEL}).json()["created"][0]
+    client.post(f"{API}/decks/{keen}/suggestions/{sid}/vote", json={"vote": "up"})
+    # As if a whole list had been applied over the API (apply_list.py).
+    conn = db.connect(world["db_path"])
+    conn.execute("INSERT INTO deck_wants (deck_id, card_name, created_at) VALUES (?, ?, 'now')",
+                 (keen, ANGEL))
+    conn.commit()
+    [s] = client.get(f"{API}/decks/{keen}/suggestions").json()["suggestions"]
+    assert s["state"] == "on_list"
+    assert "/suggestions" not in client.get(f"/decks/{keen}").text  # nothing open: no button
+    assert client.post(f"{API}/decks/{keen}/suggestions/{sid}/vote", json={"vote": "down"}).status_code == 422

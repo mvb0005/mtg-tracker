@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% set active = "decks" %}
+{% block title %}Review suggestions for {{ deck.name }}{% endblock %}
+{% block body_attrs %}{{ theme_attrs(identity) }}{% endblock %}
+{% block content %}
+<p><a href="/decks/{{ deck.id }}/suggestions">← All suggestions</a> · <a href="/decks/{{ deck.id }}">{{ deck.name }}</a></p>
+<h1>Review <span class="subtle">for {{ deck.name }}</span></h1>
+{% include "_flash.html" %}
+<dl class="ledger review-ledger">
+  <div><dt>To review</dt><dd>{{ left }}</dd></div>
+  <div><dt>Liked</dt><dd>{{ liked }}</dd></div>
+  <div><dt>Passed</dt><dd>{{ done - liked }}</dd></div>
+</dl>
+
+{% if card %}
+<article class="review" id="review-card" aria-labelledby="review-name">
+  <div class="review-art">
+    {% if card.art.image %}
+    <img src="{{ card.art.image }}" alt="{{ card.card_name }}" draggable="false" referrerpolicy="no-referrer">
+    {% else %}
+    <div class="tile-placeholder"><span>{{ card.card_name }}</span></div>
+    {% endif %}
+  </div>
+  <div class="review-body">
+    {% if card.theme %}<h3 class="review-theme">{{ card.theme }}</h3>{% endif %}
+    <h2 id="review-name">{{ card.card_name }} <span class="review-cost">{{ card.facts.mana_cost | mana_symbols }}</span></h2>
+    <table class="suggest-compare">
+      <tbody>
+        <tr><th scope="row">Type</th><td>{{ card.facts.type_line or "—" }}</td></tr>
+        <tr><th scope="row">Mana value</th><td class="num">{{ "%g" | format(card.facts.cmc) if card.facts.cmc is not none else "?" }}</td></tr>
+        <tr><th scope="row">Price</th><td class="num">{{ card.price_cents | money if card.price_cents is not none else "—" }}{% if card.price_cents is not none %} <span class="subtle">cheapest paper</span>{% endif %}</td></tr>
+        {% if card.cut_card_name %}<tr><th scope="row">Replaces</th><td>{{ card.cut_card_name }}</td></tr>{% endif %}
+        {% if card.owned %}<tr><th scope="row">You have</th><td>{{ card.owned }}, in {{ card.owned_in | join(" and ") }}</td></tr>{% endif %}
+        {% if card.friends %}<tr><th scope="row">Friends have</th><td>{{ card.friends | map(attribute="name") | join(", ") }}</td></tr>{% endif %}
+      </tbody>
+    </table>
+    {% if card.reason %}<p class="suggest-reason">{{ card.reason }}</p>{% endif %}
+    {% for face in card.art.faces %}
+    <div class="review-oracle">
+      {% if card.art.faces | length > 1 %}<p class="subtle">{{ face.name }} {{ face.mana_cost | mana_symbols }}</p>{% endif %}
+      {% for line in (face.oracle_text or "").split("\n") %}<p>{{ line | mana_symbols }}</p>{% endfor %}
+      {% if face.stats %}<p class="subtle">{{ face.stats }}</p>{% endif %}
+    </div>
+    {% endfor %}
+    <form class="review-form" method="post" action="/decks/{{ deck.id }}/suggestions/{{ card.id }}/vote">
+      <input type="hidden" name="back" value="review">
+      <details class="review-note">
+        <summary>Add a note</summary>
+        <label class="visually-hidden" for="review-note-text">Why</label>
+        <textarea id="review-note-text" name="note" rows="3" maxlength="2000" placeholder="Why, for whoever suggested it"></textarea>
+      </details>
+      <div class="review-buttons">
+        <button type="submit" name="vote" value="down" class="btn review-pass">← Pass</button>
+        <button type="submit" name="vote" value="up" class="btn primary review-like">Like →</button>
+      </div>
+    </form>
+    <p class="subtle review-hint">Swipe the card right to like it or left to pass, or press → or ←.</p>
+  </div>
+</article>
+{% else %}
+<p>{% if done %}Every suggestion is reviewed.{% else %}Nothing to review yet.{% endif %} <a href="/decks/{{ deck.id }}/suggestions">See them all</a>.</p>
+{% endif %}
+
+{% if last %}
+<form class="review-undo" method="post" action="/decks/{{ deck.id }}/suggestions/{{ last.id }}/reopen">
+  <input type="hidden" name="back" value="review">
+  <span class="subtle">Last: {{ "liked" if last.vote == "up" else "passed on" }} {{ last.card_name }}{% if last.vote_note %} ({{ last.vote_note }}){% endif %}.</span>
+  <button type="submit" class="link-button">Undo</button>
+</form>
+{% endif %}
+
+<script src="{{ url_for('static', path='review.js') }}?v={{ static_version('review.js') }}" defer></script>
+{% endblock %}

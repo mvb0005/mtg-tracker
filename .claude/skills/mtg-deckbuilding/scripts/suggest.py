@@ -8,8 +8,10 @@ FILE.json (or - for stdin) is {"theme": "...", "suggestions": [{"name", "replace
 a per-item "theme" overrides the file's. Prices are looked up on Scryfall
 (cheapest paper USD) unless an item has "price_cents" or --no-prices is given.
 --dry-run shows what the site would create and skip, and writes nothing.
---list prints every suggestion and its state, dismissed ones included: read
-it before suggesting, and never re-suggest a dismissed card.
+--list prints every suggestion and its state, dismissed ones included, with
+the user's vote (+ liked, - passed) and note: read it before suggesting,
+never re-suggest a dismissed card, and treat the notes as their feedback.
+Batches over the site's limit are posted in chunks of 50.
 """
 import argparse
 import json
@@ -42,11 +44,16 @@ def add_prices(items: list[dict]) -> None:
                 item["price_cents"] = to_cents(cheapest_usd(client, item["name"]))
 
 
+CHUNK = 50  # suggestions.MAX_BATCH on the site
+
+
 def show(suggestions: list[dict]) -> None:
     for s in suggestions:
         cut = f" for {s['cut_card_name']}" if s["cut_card_name"] else ""
         price = f" ${s['price_cents'] / 100:.2f}" if s["price_cents"] is not None else ""
-        print(f"[{s['state']}] {s['card_name']}{cut}{price}  ({s['theme'] or 'no theme'})")
+        vote = {"up": " +", "down": " -"}.get(s.get("vote") or "", "")
+        note = f"  note: {s['vote_note']}" if s.get("vote_note") else ""
+        print(f"[{s['state']}{vote}] {s['card_name']}{cut}{price}  ({s['theme'] or 'no theme'}){note}")
 
 
 def main(argv: list[str]) -> None:
@@ -64,10 +71,12 @@ def main(argv: list[str]) -> None:
     items = load(args.file)
     if not args.no_prices:
         add_prices(items)
-    result = _api.post(path, {"suggestions": items}, params={"dry_run": 1} if args.dry_run else None)
-    print(("DRY RUN: " if args.dry_run else "") + result["notice"])
-    for skip in result["skipped"]:
-        print(f"  skipped {skip['name']}: {skip['reason']}")
+    for start in range(0, len(items), CHUNK):
+        chunk = items[start:start + CHUNK]
+        result = _api.post(path, {"suggestions": chunk}, params={"dry_run": 1} if args.dry_run else None)
+        print(("DRY RUN: " if args.dry_run else "") + result["notice"])
+        for skip in result["skipped"]:
+            print(f"  skipped {skip['name']}: {skip['reason']}")
 
 
 if __name__ == "__main__":

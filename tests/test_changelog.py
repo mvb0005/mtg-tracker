@@ -24,7 +24,7 @@ def cl_triggers(conn):
         "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'cl\\_%' ESCAPE '\\'")}
 
 
-def extra_migrations(tmp_path, monkeypatch, sql, name="0010_extra.sql"):
+def extra_migrations(tmp_path, monkeypatch, sql, name="9999_extra.sql"):
     """The real migrations plus one more, as the active migrations dir."""
     path = tmp_path / "migrations"
     shutil.copytree(db.MIGRATIONS_DIR, path)

@@ -12,6 +12,7 @@
 <h1>Suggestions <span class="subtle">for {{ deck.name }}</span></h1>
 <p class="subtle">Cards proposed for this deck, each next to the card it would replace. Accept puts one on the <a href="/decks/{{ deck.id }}/modify">Modify</a> page as a card to acquire; nothing changes until you apply it there.{% if pending %} {{ pending }} change{{ "s" if pending != 1 }} waiting there now.{% endif %}</p>
 {% include "_flash.html" %}
+{% if to_review %}<p><a class="btn primary" href="/decks/{{ deck.id }}/suggestions/review">Review <span class="btn-count">{{ to_review }}</span></a> <span class="subtle">one card at a time: like or pass, with a note if you want.</span></p>{% endif %}
 
 {% if not themes %}
 <p class="subtle">No open suggestions. Ask Claude for ideas and they'll show up here to compare.</p>
@@ -53,6 +54,7 @@
               </tbody>
             </table>
             {% if s.reason %}<p class="suggest-reason">{{ s.reason }}</p>{% endif %}
+            {% if s.vote == "up" %}<p class="suggest-vote-note"><span class="tag ok">liked</span>{% if s.vote_note %} {{ s.vote_note }}{% endif %}</p>{% endif %}
             <div class="change-actions">
               <form method="post" action="/decks/{{ deck.id }}/suggestions/{{ s.id }}/accept"><button type="submit" class="primary">Accept</button></form>
               <form method="post" action="/decks/{{ deck.id }}/suggestions/{{ s.id }}/dismiss"><button type="submit" class="link-button">Dismiss</button></form>
@@ -76,7 +78,8 @@
     <span><strong>{{ s.card_name }}</strong>{% if s.cut_card_name %} <span class="subtle">for {{ s.cut_card_name }}</span>{% endif %}</span>
     {% if s.state == "queued" %}<a class="tag ok" href="/decks/{{ deck.id }}/modify#change-{{ s.change_id }}">queued on Modify</a>
     {% elif s.state == "applied" %}<a class="tag ok" href="/decks/{{ deck.id }}/versions/{{ s.applied_version }}">in v{{ s.applied_version }}</a>
-    {% else %}<span class="tag">dismissed</span>
+    {% elif s.state == "on_list" %}<span class="tag ok">on the list</span>
+    {% else %}<span class="tag">{{ "passed" if s.vote == "down" else "dismissed" }}</span>{% if s.vote_note %} <span class="subtle">{{ s.vote_note }}</span>{% endif %}
       <form method="post" action="/decks/{{ deck.id }}/suggestions/{{ s.id }}/reopen"><button type="submit" class="link-button">Reopen</button></form>
     {% endif %}
   </li>
