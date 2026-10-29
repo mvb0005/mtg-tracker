@@ -296,7 +296,8 @@ def test_post_timeout_falls_back_to_per_card_gets(isolated_cache, mock_scryfall,
     got = scryfall.fetch_collection(idents)
     assert [c["name"] for c in got] == ["Alpha", "By Id", "By Number"]
     assert [r.method for r in requests] == ["POST", "GET", "GET", "GET"]
-    assert pauses == [scryfall.FALLBACK_PAUSE] * 2
+    # Paced: the GETs share the 10/s budget; /cards/named has its own 2/s.
+    assert all(0 < p <= scryfall.INTERVALS["other"] for p in pauses)
     # cached, so asking again needs no network at all
     assert len(list((isolated_cache / "cards").glob("*.json"))) == 3
     assert len(requests) == 4
@@ -318,26 +319,45 @@ def test_fallback_404_is_none_in_that_slot(isolated_cache, mock_scryfall, pauses
     assert [c and c["name"] for c in got] == ["One", None, "Three"]
 
 
-def test_fallback_retries_429(isolated_cache, mock_scryfall, pauses):
-    set_handler, _ = mock_scryfall
-    calls = {"n": 0}
-
-    def per_card(request):
-        calls["n"] += 1
-        return httpx.Response(429) if calls["n"] <= 2 else _by_fuzzy(request)
-
-    set_handler(_collection_down(per_card))
-    got = scryfall.fetch_collection([{"name": "One"}])
-    assert got[0]["name"] == "One"
-    assert pauses == [1, 2]
-
-
-def test_fallback_gives_up_on_persistent_429(isolated_cache, mock_scryfall, pauses):
-    set_handler, _ = mock_scryfall
-    set_handler(_collection_down(lambda r: httpx.Response(429)))
-    with pytest.raises(httpx.HTTPStatusError):
+def test_a_429_starts_a_cooldown_with_no_requests(isolated_cache, mock_scryfall, pauses, monkeypatch):
+    """Scryfall locks a client out for 30s after a 429 and may ban one that
+    keeps going, so nothing is retried and nothing is sent until it's over."""
+    set_handler, requests = mock_scryfall
+    set_handler(_collection_down(lambda r: httpx.Response(429), post=lambda r: httpx.Response(429)))
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(scryfall.time, "monotonic", lambda: clock["now"])
+    with pytest.raises(scryfall.RateLimited) as exc:
         scryfall.fetch_collection([{"name": "One"}])
-    assert pauses == [1, 2, 4]
+    assert exc.value.retry_after == 30
+    assert len(requests) == 1  # the POST; no per-card fallback on a 429
+    clock["now"] += 10
+    with pytest.raises(scryfall.RateLimited, match="try again in 20 seconds"):
+        scryfall.fetch_named_card("One")
+    assert len(requests) == 1
+    clock["now"] += 21
+    set_handler(_by_fuzzy)
+    assert scryfall.fetch_named_card("One")["name"] == "One"
+    assert len(requests) == 2
+
+
+def test_retry_after_longer_than_the_cooldown_is_honored(isolated_cache, mock_scryfall, monkeypatch):
+    set_handler, _ = mock_scryfall
+    set_handler(lambda r: httpx.Response(429, headers={"Retry-After": "90"}))
+    with pytest.raises(scryfall.RateLimited) as exc:
+        scryfall.fetch_named_card("One")
+    assert exc.value.retry_after == 90
+
+
+def test_requests_are_paced_per_endpoint(monkeypatch):
+    waits = []
+    monkeypatch.setattr(scryfall, "_pause", waits.append)
+    monkeypatch.setattr(scryfall.time, "monotonic", lambda: 50.0)  # all at once
+    client = _REAL_CLIENT(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})))
+    for url in ("https://api.scryfall.com/cards/named", "https://api.scryfall.com/cards/named",
+                "https://api.scryfall.com/cards/search", "https://api.scryfall.com/sets",
+                "https://api.scryfall.com/sets"):
+        scryfall._send(client, "GET", url)
+    assert waits == pytest.approx([0.5, 0.1])  # the second named, then the second "other"
 
 
 def test_unreachable_scryfall_raises_the_original_error(isolated_cache, mock_scryfall, pauses):

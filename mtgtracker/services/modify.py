@@ -158,14 +158,22 @@ def _queue_and_apply(conn: sqlite3.Connection, deck_id: int, adds: list[dict], c
             else:
                 used_lots.add(cut["lot_id"])
         resolved.append(cut)
+    for add in adds:
+        if add.get("lot_id") is None and not (add.get("name") or "").strip():
+            raise ServiceError("each add needs a card name or a lot_id")
+    # Every planned card is looked up at once, before anything is queued.
+    planned = iter(deckmods.resolve_names(
+        [add["name"].strip() for add in adds if add.get("lot_id") is None]
+    ))
     change_ids = []
     for add in adds:
         if add.get("lot_id") is not None:
             change_ids.append(deckmods.add_owned(conn, deck_id, add["lot_id"], commit=False))
-        elif (add.get("name") or "").strip():
-            change_ids.append(deckmods.add_planned(conn, deck_id, add["name"], commit=False))
         else:
-            raise ServiceError("each add needs a card name or a lot_id")
+            card = next(planned)
+            change_ids.append(
+                deckmods.add_planned_card(conn, deck_id, card["name"], card["id"], commit=False)
+            )
     for change_id, cut in zip(change_ids, resolved, strict=False):
         deckmods.set_cut(conn, deck_id, change_id, cut.get("lot_id"), cut_want_id=cut.get("want_id"),
                          commit=False)

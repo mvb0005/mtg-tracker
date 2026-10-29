@@ -60,8 +60,11 @@ Run `scripts/check_list.py` on any candidate list. It checks the count, singleto
 - **Search with Scryfall syntax** against the API, cache first:
   - `id<=wu legal:commander game:paper o:"opponent's turn"`
   - `order=edhrec` brings well-known cards to the top.
-- **Be polite to Scryfall.** Send `scryfall.USER_AGENT`, wait 0.3s or more between requests, and back off on HTTP 429. Batch with `scryfall.fetch_collection`, which answers known cards from the cache and only fetches the missing ones.
-  - If you get a run of 429s or "Couldn't reach Scryfall", stop and wait a minute or more. A burst of searches can get you blocked for a while.
+- **Respect Scryfall's rate limits** (https://scryfall.com/docs/api/rate-limits): 2 requests a second for search, named, random and collection, and 10 a second for everything else. A 429 locks you out for 30 seconds, and continuing after it risks a ban.
+  - Send every request through `scryfall._send`, which paces it and refuses during the cooldown, with `scryfall.USER_AGENT`. Never write a raw `httpx` loop against `api.scryfall.com`.
+  - Batch with `scryfall.fetch_collection`, which answers known cards from the cache and fetches the missing ones in one POST.
+  - Prices come from the daily bulk file (`prices.py` downloads it at most once a day), so pricing 100 cards makes no API calls.
+  - On "Scryfall asked us to slow down", wait the time it gives before trying again. The live site shares your network address, so your local requests count against its limit too.
 - **Check ownership before recommending a purchase.** Run `scripts/who_owns.py <names...>` to see the user's copies and friends' copies, and which deck holds each.
   - A friend's loose copies can be borrowed, unless the notes say otherwise.
   - A copy in another of the user's decks would have to *move*. Say so.
@@ -85,7 +88,7 @@ Run `scripts/check_list.py` on any candidate list. It checks the count, singleto
    - Scryfall must know the card (unreleased spoilers are refused with `cards_not_found`).
    - The user accepts on the page, which queues the change on the Modify page; they apply it there. While anything is queued, `apply_list.py` gets `pending_changes`, so don't also apply the same swaps through the API.
    - The user can also **swipe through them** at `/decks/<id>/suggestions/review`: like or pass, with an optional note. `--list` shows `+`/`-` and the note. A pass is a dismissal. Read every note as feedback, and put lasting preferences into the deck notes.
-   - **For a new deck, use the candidate pool.** Create the deck with only its commander (`POST /api/v1/decks`, dry run first). Then post every plausible card, more than 100 is fine, as themed suggestions with no `replaces`: reveal targets, engine, ramp, draw, removal, protection, lands and over-budget upgrades. Skip basics. Once the user has swiped, build the 100 from the liked cards, fill the gaps (asking about any pass that leaves a hole), and apply it with `apply_list.py --target`. Liked cards that reach the list show as `on_list`.
+   - **For a new deck, use the candidate pool.** Create the deck with only its commander (`POST /api/v1/decks`, dry run first). Then post every plausible card, more than 100 is fine, as themed suggestions with no `replaces`: reveal targets, engine, ramp, draw, removal, protection, lands and over-budget upgrades. Skip basics. Once the user has swiped, build the 100 from the liked cards, fill the gaps (asking about any pass that leaves a hole), and apply it with `apply_list.py --target` (it allows adds without cuts for this). Liked cards that reach the list show as `on_list`.
 2. **When the user agrees, change the live deck through the API.** Never write the database directly. Use `scripts/apply_list.py DECK_ID --target LIST`:
    - It diffs the deck against the target list (or takes explicit `--pairs`), then posts one request to `POST /api/v1/decks/<id>/changes` with `expect_version`. Each add is queued as a planned ("to acquire") change, paired with a cut, and everything is applied as **one version** with a note, all or nothing.
    - **It dry-runs first and prints the plan and the diff** (`?dry_run=1` runs the real code and rolls back, leaving no trace). Run it with `--plan` to stop there, show the swaps to the user, and apply only after they agree.
@@ -112,7 +115,7 @@ Keep the notes short and current. Edit stale lines rather than appending forever
 ## Scripts (run from the repo root with `.venv/bin/python`)
 
 - `scripts/check_list.py LIST [--commander NAME]`: count, singleton rule, color identity, legality, slot counts, curve and pips. LIST is decklist text: `Commander` and `Deck` sections, `N Name` lines.
-- `scripts/prices.py [--cap 5] NAME... | -`: cheapest paper USD per card, the total, and anything over the cap.
+- `scripts/prices.py [--cap 5] NAME... | -`: cheapest paper USD per card (from Scryfall's daily bulk file, cached for a day in `.scryfall_cache/bulk/`), the total, and anything over the cap.
 - `scripts/who_owns.py NAME... | -`: every owner's copies of each card, and where they are (via `/api/v1/cards/owners`).
 - `scripts/suggest.py DECK_ID FILE.json [--dry-run] [--no-prices] | DECK_ID --list`: post a themed batch of suggestions (prices looked up), or list them with their state.
 - `scripts/apply_list.py DECK_ID (--target LIST | --pairs JSON) [--plan] [--note TEXT]`: diff, dry run (printed), then apply as one version with `expect_version`, and verify.

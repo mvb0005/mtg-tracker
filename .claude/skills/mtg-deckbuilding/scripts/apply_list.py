@@ -31,14 +31,17 @@ def current_counts(deck: dict) -> tuple[collections.Counter, dict]:
 
 
 def diff_lists(current, cnames, target, tnames) -> dict:
-    """The swaps that turn `current` into `target` (Counters by key, with
-    display names): {"adds": [...], "cuts": [...]}, paired one to one. Raises
-    ValueError if the card counts differ, since swaps keep the size."""
-    if sum(target.values()) != sum(current.values()):
+    """The changes that turn `current` into `target` (Counters by key, with
+    display names): {"adds": [...], "cuts": [...]}, the cuts paired with the
+    first adds. Extra adds are fine (e.g. filling a new deck that has only its
+    commander); more cuts than adds raises ValueError, since the API has no
+    pure cuts."""
+    adds = [tnames[k] for k, q in (target - current).items() for _ in range(q)]
+    cuts = [cnames[k] for k, q in (current - target).items() for _ in range(q)]
+    if len(cuts) > len(adds):
         raise ValueError(f"target has {sum(target.values())} cards, deck has {sum(current.values())}:"
-                         " add/cut counts must match")
-    return {"adds": [tnames[k] for k, q in (target - current).items() for _ in range(q)],
-            "cuts": [cnames[k] for k, q in (current - target).items() for _ in range(q)]}
+                         " that needs more cuts than adds, which the API can't do")
+    return {"adds": adds, "cuts": cuts}
 
 
 def request_body(plan: dict, note: str, version: int) -> dict:

@@ -172,12 +172,15 @@ def test_diff_lists_pairs_adds_and_cuts_by_front_face_name():
     assert plan == {"adds": ["Rhystic Study"], "cuts": ["Island"]}
 
 
-def test_diff_lists_with_nothing_to_do_and_a_size_mismatch():
+def test_diff_lists_with_nothing_to_do_extra_adds_and_too_many_cuts():
     same, names = _counts("Sol Ring", "Island")
     assert apply_list.diff_lists(same, names, same, names) == {"adds": [], "cuts": []}
-    bigger, bnames = _counts("Sol Ring", "Island", "Command Tower")
-    with pytest.raises(ValueError, match="target has 3 cards, deck has 2"):
-        apply_list.diff_lists(same, names, bigger, bnames)
+    # Filling out a new deck: adds only (the API allows more adds than cuts).
+    bigger, bnames = _counts("Sol Ring", "Island", "Command Tower", "Forest")
+    plan = apply_list.diff_lists(same, names, bigger, bnames)
+    assert plan == {"adds": ["Command Tower", "Forest"], "cuts": []}
+    with pytest.raises(ValueError, match="target has 2 cards, deck has 4: that needs more cuts"):
+        apply_list.diff_lists(bigger, bnames, same, names)
 
 
 def test_current_counts_include_wants_and_request_body_accepts_names_or_ids():
@@ -221,8 +224,8 @@ def test_apply_list_dry_runs_then_applies_and_verifies(world, scryfall_api, tmp_
     assert rows(world, "SELECT version, note FROM deck_versions WHERE deck_id = ? AND version = 2", keen) == [
         (2, "swap")]
 
-    target.write_text(text + "\n1 Command Tower\n")
-    with pytest.raises(SystemExit, match="target has"):
+    target.write_text("1 Island\n")  # would need 99 cuts and no adds
+    with pytest.raises(SystemExit, match="needs more cuts than adds"):
         apply_list.main([str(keen), "--target", str(target)])
 
 
@@ -280,3 +283,48 @@ def test_x_act_for_only_when_the_server_sees_a_system_user(me_answer, sends_act_
     _api.get("/decks")
     _api.get("/decks")
     assert seen == [sends_act_for, sends_act_for]
+
+
+# --- prices: the daily bulk file first, then a paced search -----------------------------------
+
+def test_prices_come_from_the_bulk_index_full_names_first(monkeypatch, cache_dir):
+    import gzip
+    import json as _json
+
+    import _common
+
+    from tests.conftest import _REAL_HTTPX_CLIENT
+
+    cards = [
+        {"name": "Rampant Growth", "games": ["paper"], "layout": "normal", "prices": {"usd": "0.37"}},
+        {"name": "Rampant Growth", "games": ["paper"], "layout": "normal", "prices": {"usd": "0.90"}},
+        {"name": "Studious First-Year // Rampant Growth", "games": ["paper"], "layout": "modal_dfc",
+         "prices": {"usd": "0.22"},
+         "card_faces": [{"name": "Studious First-Year"}, {"name": "Rampant Growth"}]},
+        {"name": "Sol Ring", "games": ["mtgo"], "layout": "normal", "prices": {"usd": "0.01"}},
+        {"name": "Sol Ring", "games": ["paper"], "layout": "art_series", "prices": {"usd": "0.02"}},
+        {"name": "Sol Ring", "games": ["paper"], "layout": "normal", "prices": {"usd": "1.21"}},
+    ]
+    body = gzip.compress("\n".join(_json.dumps(c) for c in cards).encode())
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.path)
+        if request.url.path == "/bulk-data/default-cards":
+            return httpx.Response(200, json={"jsonl_download_uri": "https://data.scryfall.io/d.jsonl.gz",
+                                             "compressed_size": len(body), "updated_at": "today"})
+        if request.url.host == "data.scryfall.io":
+            return httpx.Response(200, content=body)
+        return httpx.Response(200, json={"data": []})
+
+    monkeypatch.setattr(_common, "_prices", None)
+    client = _REAL_HTTPX_CLIENT(transport=httpx.MockTransport(handler))
+    assert _common.cheapest_usd(client, "Rampant Growth") == 0.37  # not the double-faced card's price
+    assert _common.cheapest_usd(client, "Studious First-Year") == 0.22
+    assert _common.cheapest_usd(client, "Sol Ring") == 1.21  # paper, real cards only
+    assert seen == ["/bulk-data/default-cards", "/d.jsonl.gz"]
+    assert _common.cheapest_usd(client, "Unknown Card") is None  # falls back to one search
+    assert seen[-1] == "/cards/search"
+    # Saved under bulk/, never in the cache root that cached_cards() reads.
+    assert (cache_dir / "bulk" / "prices.json").exists()
+    assert not list((cache_dir / "bulk").glob("*.part"))

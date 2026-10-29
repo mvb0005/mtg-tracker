@@ -119,11 +119,29 @@ def add_planned(conn: sqlite3.Connection, deck_id: int, name: str, *, commit: bo
     _deck(conn, deck_id)
     if not name.strip():
         raise ChangeError("enter a card name")
-    try:
-        card = scryfall.fetch_named_card(name.strip())
-    except scryfall.CardLookupError as exc:
-        raise ChangeError(str(exc)) from exc
+    [card] = resolve_names([name.strip()])
     return add_planned_card(conn, deck_id, card["name"], card["id"], commit=commit)
+
+
+def resolve_names(names: list[str]) -> list[dict]:
+    """Cards for planned adds, one per name: exact names from the cache
+    first, then one collection lookup for the rest (fetch_collection, which
+    paces itself), and Scryfall's fuzzy match only for names still not
+    found. A list's worth of adds is a handful of requests, not one each
+    (which got rate limited). Raises ChangeError if a name matches nothing
+    or several cards."""
+    if not names:
+        return []
+    cards = scryfall.fetch_collection([{"name": n} for n in names])
+    resolved = []
+    for name, card in zip(names, cards, strict=True):
+        if card is None:
+            try:
+                card = scryfall.fetch_named_card(name)
+            except scryfall.CardLookupError as exc:
+                raise ChangeError(str(exc)) from exc
+        resolved.append(card)
+    return resolved
 
 
 def add_planned_card(

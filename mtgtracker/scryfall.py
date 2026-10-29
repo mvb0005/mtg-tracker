@@ -3,14 +3,17 @@
 This is deliberately not the daily "default_cards" bulk-data pipeline from
 the original brief (descoped for v1, no live pricing). It fetches a set's
 printings via the search API (paginated, per Scryfall's API guidelines: a
-descriptive User-Agent, no per-card calls, a short sleep between pages) and
-caches the result locally so repeated runs don't re-hit the network.
+descriptive User-Agent, no per-card calls) and caches the result locally so
+repeated runs don't re-hit the network. Every request is paced to Scryfall's
+published rate limits, and a 429 stops all requests for the cooldown (_send).
 """
 
 from __future__ import annotations
 
 import json
+import math
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -18,6 +21,68 @@ import httpx
 
 USER_AGENT = "mtgtracker/0.1 (personal collection tracker, local use only)"
 CACHE_DIR = Path(__file__).parent.parent / ".scryfall_cache"
+
+# Scryfall's published limits (https://scryfall.com/docs/api/rate-limits):
+# 2 a second for these endpoints, 10 a minute for the manifest, 10 a second
+# for everything else. A 429 locks us out for 30 seconds, and sending more
+# during that time risks a ban, so a 429 starts a cooldown in which every
+# request is refused here without reaching the network. One throttle per
+# process, shared by the web's threadpool (hence the lock).
+SLOW_PATHS = frozenset({"/cards/search", "/cards/named", "/cards/random", "/cards/collection"})
+INTERVALS = {"slow": 0.5, "manifest": 6.0, "other": 0.1}
+COOLDOWN = 30.0
+_throttle_lock = threading.Lock()
+_last_sent: dict[str, float] = {}
+_cooldown_until = 0.0
+
+
+class RateLimited(httpx.HTTPError):
+    """Scryfall answered 429, or we're still in the cooldown after one."""
+
+    def __init__(self, seconds: float):
+        self.retry_after = max(1, math.ceil(seconds))
+        super().__init__(f"Scryfall asked us to slow down; try again in {self.retry_after} seconds")
+
+
+def _group(path: str) -> str:
+    """Each 2/s endpoint is limited on its own; the rest share one budget."""
+    if path in SLOW_PATHS:
+        return path
+    return "manifest" if path == "/cards/manifest" else "other"
+
+
+def _interval(group: str) -> float:
+    return INTERVALS["slow"] if group.startswith("/") else INTERVALS[group]
+
+
+def _send(client: httpx.Client, method: str, url: str, **kwargs) -> httpx.Response:
+    """Every request to api.scryfall.com goes through here: wait out the
+    endpoint's interval, refuse during a cooldown, and start one on a 429
+    (Retry-After if given, else COOLDOWN). Raises RateLimited for both."""
+    global _cooldown_until
+    group = _group(httpx.URL(url).path)
+    with _throttle_lock:
+        now = time.monotonic()
+        if now < _cooldown_until:
+            raise RateLimited(_cooldown_until - now)
+        wait = max(0.0, _last_sent.get(group, -math.inf) + _interval(group) - now)
+        _last_sent[group] = now + wait
+    if wait:
+        _pause(wait)
+    resp = client.request(method, url, **kwargs)
+    if resp.status_code == 429:
+        try:
+            seconds = max(float(resp.headers.get("Retry-After", "")), COOLDOWN)
+        except ValueError:
+            seconds = COOLDOWN
+        with _throttle_lock:
+            _cooldown_until = max(_cooldown_until, time.monotonic() + seconds)
+        raise RateLimited(seconds)
+    return resp
+
+
+def _pause(seconds: float) -> None:
+    time.sleep(seconds)
 
 
 def _normalize(name: str) -> str:
@@ -45,13 +110,11 @@ def fetch_set_cards(set_code: str, *, use_cache: bool = True) -> list[dict]:
 
     with httpx.Client(timeout=15) as client:
         while url:
-            resp = client.get(url, headers=headers)
+            resp = _send(client, "GET", url, headers=headers)
             resp.raise_for_status()
             data = resp.json()
             cards.extend(data["data"])
             url = data.get("next_page") if data.get("has_more") else None
-            if url:
-                time.sleep(0.1)
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(json.dumps(cards))
@@ -73,7 +136,7 @@ def fetch_sets(*, refresh: bool = False) -> list[dict]:
         return json.loads(path.read_text())
     headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     with httpx.Client(timeout=15) as client:
-        resp = client.get("https://api.scryfall.com/sets", headers=headers)
+        resp = _send(client, "GET", "https://api.scryfall.com/sets", headers=headers)
     resp.raise_for_status()
     sets = [{"code": s["code"], "name": s["name"], "set_type": s.get("set_type")}
             for s in resp.json()["data"]]
@@ -95,7 +158,8 @@ def fetch_named_card(name: str) -> dict:
     name; other HTTP failures propagate as httpx errors."""
     headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     with httpx.Client(timeout=15) as client:
-        resp = client.get("https://api.scryfall.com/cards/named", params={"fuzzy": name}, headers=headers)
+        resp = _send(client, "GET", "https://api.scryfall.com/cards/named", params={"fuzzy": name},
+                     headers=headers)
     if resp.status_code == 404:
         error = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
         if error.get("type") == "ambiguous":
@@ -123,34 +187,20 @@ def _satisfies(card: dict, ident: dict) -> bool:
     return wanted in _names(card)
 
 
-# Pause between per-card fallback requests, and the 429 back-off schedule.
-# Both go through _pause so tests can patch it out.
-FALLBACK_PAUSE = 0.3
-RETRY_DELAYS = (1, 2, 4)
-
-
-def _pause(seconds: float) -> None:
-    time.sleep(seconds)
-
-
 def _names(card: dict) -> set[str]:
     return {_normalize(card["name"])} | {_normalize(f["name"]) for f in card.get("card_faces") or []}
 
 
 def _fetch_one(client: httpx.Client, ident: dict, headers: dict) -> dict | None:
     """One card by identifier via the per-card endpoints. None for a 404; a
-    429 is retried after RETRY_DELAYS, then raised like any other HTTP error."""
+    429 raises RateLimited (never retried: see _send)."""
     if "id" in ident:
         url, params = f"https://api.scryfall.com/cards/{ident['id']}", None
     elif "set" in ident:
         url, params = f"https://api.scryfall.com/cards/{ident['set']}/{ident['collector_number']}", None
     else:
         url, params = "https://api.scryfall.com/cards/named", {"fuzzy": ident["name"]}
-    for delay in (*RETRY_DELAYS, None):
-        resp = client.get(url, params=params, headers=headers)
-        if resp.status_code != 429 or delay is None:
-            break
-        _pause(delay)
+    resp = _send(client, "GET", url, params=params, headers=headers)
     if resp.status_code == 404:
         return None
     resp.raise_for_status()
@@ -165,9 +215,7 @@ def _fetch_each(
     `original` (the batch's own failure) rather than a per-card error."""
     out: list[dict | None] = []
     reached = False
-    for n, ident in enumerate(idents):
-        if n:
-            _pause(FALLBACK_PAUSE)
+    for ident in idents:
         try:
             card = _fetch_one(client, ident, headers)
         except httpx.TransportError:
@@ -189,9 +237,9 @@ def fetch_collection(identifiers: list[dict]) -> list[dict | None]:
     (a name matches the first cached printing, any one will do); only the rest
     go to Scryfall. If the collection POST times out, fails to connect or
     returns a 5xx, that batch is resolved one card at a time instead (GET
-    /cards/{id}, /cards/{set}/{number}, /cards/named?fuzzy=), pausing between
-    requests and backing off on 429; if Scryfall can't be reached at all, the
-    POST's own exception is raised. Returns one card (or None if not found)
+    /cards/{id}, /cards/{set}/{number}, /cards/named?fuzzy=), paced by
+    _send; if Scryfall can't be reached at all, the POST's own exception is
+    raised, and a 429 raises RateLimited. Returns one card (or None if not found)
     per identifier, in order, and caches every card found like
     fetch_named_card does. An explicit user action only (e.g. importing a
     list) -- never called on page load."""
@@ -220,13 +268,11 @@ def fetch_collection(identifiers: list[dict]) -> list[dict | None]:
     headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     with httpx.Client(timeout=30) as client:
         for start in range(0, len(missing), 75):
-            if start:
-                time.sleep(0.1)
             batch = missing[start:start + 75]
             idents = [identifiers[i] for i in batch]
             try:
-                resp = client.post("https://api.scryfall.com/cards/collection",
-                                   json={"identifiers": idents}, headers=headers)
+                resp = _send(client, "POST", "https://api.scryfall.com/cards/collection",
+                             json={"identifiers": idents}, headers=headers)
                 if resp.status_code >= 500:
                     resp.raise_for_status()
             except (httpx.TransportError, httpx.HTTPStatusError) as e:

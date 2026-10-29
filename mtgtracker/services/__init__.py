@@ -16,7 +16,7 @@ from contextlib import contextmanager
 
 import httpx
 
-from mtgtracker import deckmods
+from mtgtracker import deckmods, scryfall
 
 
 class ServiceError(Exception):
@@ -50,5 +50,7 @@ def translate_errors() -> Iterator[None]:
         yield
     except deckmods.ChangeError as exc:
         raise ServiceError(str(exc)) from exc
+    except scryfall.RateLimited as exc:
+        raise UpstreamError(str(exc)) from exc
     except httpx.HTTPError as exc:
         raise UpstreamError("Couldn't reach Scryfall") from exc

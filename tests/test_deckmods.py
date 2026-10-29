@@ -1,9 +1,10 @@
+import json
 import sqlite3
 
 import httpx
 import pytest
 
-from mtgtracker import db, deckmods
+from mtgtracker import db, deckmods, scryfall
 from mtgtracker.deckmods import ChangeError
 from tests.conftest import install_transport
 
@@ -194,7 +195,12 @@ def test_no_changes_to_apply(conn):
     ],
 )
 def test_planned_lookup_errors(conn, monkeypatch, body, message):
-    _scryfall(monkeypatch, lambda request: httpx.Response(404, json=body))
+    def handler(request):
+        if request.url.path == "/cards/collection":  # not an exact name, so the fuzzy lookup decides
+            return httpx.Response(200, json={"data": [], "not_found": [{"name": "sol"}]})
+        return httpx.Response(404, json=body)
+
+    _scryfall(monkeypatch, handler)
     keen = _deck(conn, "Keen Engineering")["id"]
     with pytest.raises(ChangeError, match=message):
         deckmods.add_planned(conn, keen, "sol")
@@ -278,3 +284,24 @@ def test_link_a_planned_change_through_the_web(client, db_path):
     assert "notice=Linked+your+copy" in resp.headers["location"]
     assert conn.execute("SELECT add_lot_id FROM deck_changes WHERE id = ?", (change,)).fetchone()[0] == copy
     conn.close()
+
+
+def test_planned_adds_use_the_cache_then_one_lookup(monkeypatch, cache_dir):
+    """A list's worth of planned adds: cached names never reach Scryfall,
+    the rest go in one collection request, not one request per card."""
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.path)
+        if request.url.path == "/cards/collection":
+            idents = json.loads(request.content)["identifiers"]
+            return httpx.Response(200, json={"data": [], "not_found": idents})
+        return httpx.Response(404, json={"object": "error", "details": "No cards found"})
+
+    _scryfall(monkeypatch, handler)
+    cached = [c["name"] for c in scryfall.cached_cards()[:30]]
+    assert [c["name"] for c in deckmods.resolve_names(cached)] == cached
+    assert seen == []
+    with pytest.raises(ChangeError, match="no card named"):
+        deckmods.resolve_names([*cached, "Not A Real Card"])
+    assert seen == ["/cards/collection", "/cards/named"]

@@ -18,6 +18,15 @@ FIXTURES = Path(__file__).parent / "fixtures"
 _REAL_HTTPX_CLIENT = httpx.Client  # captured before any test patches it
 
 
+@pytest.fixture(autouse=True)
+def scryfall_throttle(monkeypatch):
+    """Every test starts with Scryfall's throttle fresh (no cooldown left by
+    another test's 429) and never actually waits between requests."""
+    monkeypatch.setattr(scryfall, "_last_sent", {})
+    monkeypatch.setattr(scryfall, "_cooldown_until", 0.0)
+    monkeypatch.setattr(scryfall, "_pause", lambda _seconds: None)
+
+
 @pytest.fixture(scope="session")
 def seeded_template(tmp_path_factory):
     """A file-backed DB (per-request web connections can't share :memory:)
