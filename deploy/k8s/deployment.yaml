@@ -54,6 +54,22 @@ spec:
             - configMapRef:
                 name: mtgtracker-auth
                 optional: true
+          # Play (mtgtracker/play): the Forge game server in namespace forge. Its control API is in-cluster
+          # only; the secret is the one forge-gui-web's `deploy/minikube.sh secret` writes to both namespaces.
+          # Without it the play page says no game server is set up.
+          env:
+            - name: FORGE_CONTROL_URL
+              value: http://forge-control.forge.svc.cluster.local
+            - name: FORGE_TABLE_URL
+              value: /play/table/
+            - name: PLAY_RESULTS_URL
+              value: http://mtgtracker.mtgtracker.svc.cluster.local
+            - name: FORGE_CONTROL_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: forge-control
+                  key: secret
+                  optional: true
           ports:
             - name: http
               containerPort: 8000

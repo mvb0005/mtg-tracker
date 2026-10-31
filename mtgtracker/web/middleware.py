@@ -77,10 +77,11 @@ def install(app: FastAPI) -> None:
     @app.middleware("http")
     async def identify(request: Request, call_next):
         """Who's asking (web/auth.py): request.state.user is the principal,
-        request.state.actor who really asks. Static files and the kubelet's
-        /healthz probe need no identity. After the
+        request.state.actor who really asks. Static files, the kubelet's
+        /healthz probe and the game server's /play/results need no identity. After the
         response, a successful write is audited."""
-        if not (request.url.path.startswith("/static/") or request.url.path == "/healthz"):
+        # /play/results is the game server posting a result with its shared secret (mtgtracker/play).
+        if not (request.url.path.startswith("/static/") or request.url.path in ("/healthz", "/play/results")):
             state = request.app.state
             conn = db.connect(state.db_path, check_same_thread=False)
             try:
