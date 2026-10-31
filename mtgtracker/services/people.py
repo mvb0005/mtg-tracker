@@ -51,6 +51,21 @@ def rename_person(
     return "Saved.", f"Renamed {user.display_name} to {renamed.display_name}"
 
 
+def change_username(
+    conn: sqlite3.Connection, user: users.User, username: str, *, commit: bool = True
+) -> tuple[str, str]:
+    """Set or clear someone's username (their handle for play invites). Returns (notice, audit summary)."""
+    try:
+        changed = users.set_username(conn, user.id, username, commit=commit)
+    except users.UserError as exc:
+        raise ServiceError(str(exc)) from exc
+    if changed.username == user.username:
+        return "Saved.", "Saved (no change)"
+    if changed.username is None:
+        return "Saved.", f"Cleared {user.display_name}'s username"
+    return "Saved.", f"{user.display_name} is now @{changed.username}"
+
+
 def edit_person(
     conn: sqlite3.Connection, actor: users.User, person_id: int, display_name: str, email: str,
     *, confirm_email: bool = False, commit: bool = True,

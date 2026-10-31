@@ -5,6 +5,7 @@
 {% include "_flash.html" %}
 <form class="import-form" method="post" action="/profile">
   <label class="field">Display name <input type="text" name="display_name" value="{{ person.display_name }}" required maxlength="60"></label>
+  <label class="field">Username <input type="text" name="username" value="{{ person.username or '' }}" maxlength="24" pattern="[a-z0-9][a-z0-9_\-]{1,23}" placeholder="e.g. matt" autocapitalize="none" spellcheck="false"><span>How friends find you to invite you to a game. Lowercase letters, digits, _ and -.</span></label>
   <button type="submit" class="primary">Save</button>
 </form>
 <h2>Account</h2>

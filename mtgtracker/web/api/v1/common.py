@@ -35,7 +35,8 @@ class ApiError(Exception):
 
 
 def user_json(user: users.User) -> dict:
-    return {"id": user.id, "name": user.display_name, "kind": user.kind, "is_admin": user.is_admin}
+    return {"id": user.id, "name": user.display_name, "username": user.username, "kind": user.kind,
+            "is_admin": user.is_admin}
 
 
 def write(
