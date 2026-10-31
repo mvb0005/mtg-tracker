@@ -52,7 +52,16 @@ pod() {
 # Checked here so a bad value fails the deploy instead of crash-looping the
 # pod. None of these are secrets (the AUD is an identifier, not a key).
 apply_auth_config() {
-  local mode domain aud owner
+  local mode domain aud owner current
+  # No .env (a fresh checkout, another clone): keep whatever the cluster has. Rebuilding it from nothing
+  # would quietly turn sign-in off (single) on a site that has it on.
+  if [[ ! -f .env ]]; then
+    current=$("${KUBECTL[@]}" get configmap mtgtracker-auth -o jsonpath='{.data.MTG_AUTH}' 2>/dev/null || true)
+    if [[ -n $current ]]; then
+      echo "auth: no .env here, keeping the cluster's ($current)"
+      return
+    fi
+  fi
   mode=$(env_value MTG_AUTH); mode=${mode:-single}
   domain=$(env_value CF_ACCESS_TEAM_DOMAIN)
   aud=$(env_value CF_ACCESS_AUD)
