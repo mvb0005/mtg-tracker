@@ -1182,3 +1182,17 @@ body[data-identity] .deck-section-head { border-bottom: 0; padding-bottom: 6px; 
 .assemble-confirm { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; max-width: 60ch; }
 .assemble-preview { border-top: 2px solid var(--accent); margin-bottom: 24px; }
 .assemble-form .tile-grid, .assemble-form + h2 + p + .tile-grid { margin-bottom: 16px; }
+
+/* Play (mtgtracker/play): pick a deck and opponents as ruled rows, the chosen one marked by the accent. */
+.play-choices { list-style: none; margin: 0; padding: 0; }
+.play-choices li { border-bottom: 1px solid var(--border); }
+.play-choices label { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 2px 10px; align-items: baseline; padding: 10px 8px 10px 10px; border-left: 3px solid transparent; cursor: pointer; }
+.play-choices label:has(input:checked) { border-left-color: var(--accent); background: var(--surface); }
+.play-choices label.disabled { cursor: default; opacity: 0.65; }
+.play-name { font-family: var(--font-display); font-weight: 600; font-size: 1.05rem; overflow-wrap: anywhere; }
+.play-meta { grid-column: 2; color: var(--muted); font-size: 0.9rem; }
+.play-start { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 14px 0; margin-top: 18px; background: var(--bg); border-top: 2px solid var(--text); }
+.play-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.play-actions form { margin: 0; }
+.play-when { white-space: nowrap; color: var(--muted); width: 1%; }
+.play-actions button.btn { font: inherit; cursor: pointer; }

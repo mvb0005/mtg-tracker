@@ -166,7 +166,7 @@ def test_openapi_lists_the_api_paths(world):
 
 def test_me_for_a_person_and_a_system_actor(world):
     me = person(world).get(f"{API}/me").json()
-    assert me["principal"] == {"id": 1, "name": "Owner", "kind": "person", "is_admin": True}
+    assert me["principal"] == {"id": 1, "name": "Owner", "username": None, "kind": "person", "is_admin": True}
     assert me["actor"] == me["principal"]
     sys_me = system(world, act_for=world["friend"].id).get(f"{API}/me").json()
     assert sys_me["principal"]["id"] == world["friend"].id

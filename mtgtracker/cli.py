@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import sys
@@ -10,6 +11,7 @@ import typer
 from mtgtracker import db, users
 from mtgtracker.importers.order_wallet import import_order_file
 from mtgtracker.importers.precon_decklist import seed_precon_deck_for_product
+from mtgtracker.play import games as play_games
 
 app = typer.Typer(help="Personal MTG collection and spending tracker.")
 
@@ -294,6 +296,24 @@ def deck_notes(
         typer.echo(f"Saved {len(text)} characters of notes for deck {deck_id}.")
         return
     typer.echo(conn.execute("SELECT notes FROM decks WHERE id = ?", (deck_id,)).fetchone()[0] or "")
+
+
+@app.command("import-play-history")
+def import_play_history(
+    games_file: Path = typer.Argument(..., help="The game server's old play/games.json"),
+    db_path: Path = typer.Option(DEFAULT_DB_PATH, "--db", help="SQLite database path"),
+):
+    """Bring the Forge game server's old play log into Play's history (each game to the person its email
+    names; games with no or an unknown email are skipped). Safe to re-run."""
+    conn = _connect(db_path)
+    data = json.loads(games_file.read_text(encoding="utf-8"))
+
+    def owner(email):
+        person = users.by_email(conn, email) if email else None
+        return person.id if person else None
+
+    imported, skipped = play_games.import_history(conn, data, owner_by_email=owner)
+    typer.echo(f"Imported {imported} games; skipped {skipped}.")
 
 
 @app.command("list-decks")

@@ -7,6 +7,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from mtgtracker import users
 from mtgtracker.confirm import risky
 from mtgtracker.services import collection as collection_service
 from mtgtracker.services import people as people_service
@@ -22,6 +23,16 @@ def _import_json(row: sqlite3.Row) -> dict:
         "import_id": row["id"], "owner_id": row["owner_id"], "filename": row["original_filename"],
         "format": row["format"], "card_count": row["card_count"], "imported_at": row["imported_at"],
     }
+
+
+@router.get("/people")
+def list_people(conn: sqlite3.Connection = Depends(get_conn)):
+    """Everyone on this tracker you can invite to play: people (never system users or disabled ones), with
+    their username. No emails."""
+    return {"people": [
+        {"id": u.id, "name": u.display_name, "username": u.username, "signed_in": u.signed_in}
+        for u in users.list_users(conn) if not u.disabled
+    ]}
 
 
 @router.get("/people/{person_id}/imports")

@@ -1,4 +1,4 @@
-"""The principal's profile: read it, rename it. No email changes over the API."""
+"""The principal's profile: read it, rename it, set its username. No email changes over the API."""
 
 from __future__ import annotations
 
@@ -17,12 +17,14 @@ router = APIRouter()
 
 class ProfileIn(BaseModel):
     display_name: str
+    username: str | None = None  # absent leaves it; "" clears it
 
 
 def _profile(request: Request, conn: sqlite3.Connection) -> dict:
     person = users.get(conn, me(request).id)
     body = {
-        "id": person.id, "display_name": person.display_name, "is_admin": person.is_admin,
+        "id": person.id, "display_name": person.display_name, "username": person.username,
+        "is_admin": person.is_admin,
         "member_since": person.created_at, "signed_in": person.signed_in,
     }
     if actor(request).kind == "person":  # the email is the sign-in key: people only
@@ -41,6 +43,11 @@ def put_profile(body: ProfileIn, request: Request, conn: sqlite3.Connection = De
     just audited). ?dry_run=1 validates and changes nothing."""
     def run() -> dict:
         _, summary = people_service.rename_person(conn, me(request), body.display_name, commit=False)
+        if body.username is not None:
+            person = users.get(conn, me(request).id)
+            _, handle = people_service.change_username(conn, person, body.username, commit=False)
+            if handle != "Saved (no change)":
+                summary = handle if summary == "Saved (no change)" else f"{summary}; {handle}"
         return {"profile": _profile(request, conn), "notice": summary}
 
     return write(request, conn, run)

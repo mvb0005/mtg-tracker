@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% set active = "play" %}
+{% block title %}Play{% endblock %}
+{% block content %}
+<h1>Play</h1>
+<p class="subtle">Goldfish a deck against AI commanders that each play one clear plan. The game server hosts one game at a time.</p>
+{% include "_flash.html" %}
+{% if problem %}<div class="flash err" role="alert">{{ problem }}</div>{% endif %}
+
+{% if running %}
+<section class="play-running">
+  <h2>At the table</h2>
+  {% if mine %}
+    <p><strong>{{ mine.deck_name }}</strong> against {{ mine.opponents | map(attribute="name") | join(", ") }}, started {{ mine.started_at[:16] | replace("T", " ") }} UTC.</p>
+    <div class="play-actions">
+      {% if mine.ticket and table_link %}<a class="btn primary" href="{{ table_link(mine.ticket) }}">Back to the table</a>{% endif %}
+      <form method="post" action="/play/end"><input type="hidden" name="match_id" value="{{ mine.match_id }}"><button type="submit" class="btn">End this game</button></form>
+    </div>
+  {% else %}
+    <p>{{ running_who }} {{ "is" if "," not in running_who else "are" }} playing right now. You can start a game when it ends.</p>
+    {% if can_end_any %}
+    <form method="post" action="/play/end"><input type="hidden" name="match_id" value="{{ running.matchId }}"><button type="submit" class="btn">End their game</button></form>
+    {% endif %}
+  {% endif %}
+</section>
+{% endif %}
+
+<form method="post" action="/play/start" class="play-form">
+  <h2>Your deck</h2>
+  {% if decks %}
+  <ul class="play-choices">
+    {% for d in decks %}
+    <li>
+      <label{% if not d.commander %} class="disabled"{% endif %}>
+        <input type="radio" name="deck_id" value="{{ d.id }}" {% if not d.commander %}disabled{% elif loop.first %}checked{% endif %}>
+        <span class="play-name">{{ d.name }}</span>
+        <span class="play-meta">{% if d.commander %}{{ d.commander }}{% else %}No commander yet: <a href="/decks/{{ d.id }}">pick one on its page</a>{% endif %}{% if d.wanted_count %} · plays {{ d.wanted_count }} card{{ "s" if d.wanted_count != 1 }} you don't own yet{% endif %}</span>
+      </label>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">You have no decks yet. <a href="/decks">Make one</a> from a decklist.</p>
+  {% endif %}
+
+  <h2>Opponents <span class="subtle">one to three</span></h2>
+  {% if opponents %}
+  <ul class="play-choices">
+    {% for o in opponents %}
+    <li>
+      <label>
+        <input type="checkbox" name="opponent" value="{{ o.id }}"{% if loop.index <= 2 %} checked{% endif %}>
+        <span class="play-name">{{ o.commander.split(",")[0] }} <span class="tag">{{ o.archetype }}</span></span>
+        <span class="play-meta">{{ o.plan }} {{ o.deck }}.</span>
+      </label>
+    </li>
+    {% endfor %}
+  </ul>
+  {% elif not problem %}
+  <p class="empty">The game server lists no opponents.</p>
+  {% endif %}
+
+  <div class="play-start">
+    <button type="submit" class="primary"{% if problem or not decks or running %} disabled{% endif %}>Start game</button>
+    <span class="subtle">The whole list plays, including cards you still have to buy.</span>
+  </div>
+</form>
+
+<h2>Recent games</h2>
+{% if recent %}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>When</th><th>Deck</th><th>Against</th><th>Result</th></tr></thead>
+  <tbody>
+  {% for g in recent %}
+    <tr>
+      <td class="play-when">{{ g.started_at[:16] | replace("T", " ") }}</td>
+      <td>{{ g.deck_name }}</td>
+      <td>{{ g.opponents | map(attribute="name") | join(", ") }}</td>
+      <td>{% if g.status == "playing" %}<span class="tag ok">Playing</span>{% elif g.status == "abandoned" %}<span class="tag">Abandoned</span>{% elif g.status == "ended" %}<span class="tag">Ended</span>{% else %}{{ g.summary or "Finished" }}{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No games yet.</p>
+{% endif %}
+{% endblock %}

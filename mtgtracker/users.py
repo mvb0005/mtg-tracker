@@ -22,6 +22,8 @@ from datetime import UTC, datetime
 OWNER_ID = 1
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MAX_NAME = 60
+# A handle for play invites (mtgtracker/play): lowercase letters, digits, _ and -, 2 to 24 long.
+_USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,23}$")
 
 
 class UserError(ValueError):
@@ -38,6 +40,7 @@ class User:
     kind: str = "person"  # 'person' or 'system'
     disabled: bool = False
     created_at: str | None = None
+    username: str | None = None
 
 
 @dataclass(frozen=True)
@@ -56,7 +59,8 @@ def _user(row: sqlite3.Row | None) -> User | None:
         return None
     return User(id=row["id"], email=row["email"], display_name=row["display_name"],
                 is_admin=bool(row["is_admin"]), signed_in=row["last_seen_at"] is not None,
-                kind=row["kind"], disabled=row["disabled_at"] is not None, created_at=row["created_at"])
+                kind=row["kind"], disabled=row["disabled_at"] is not None, created_at=row["created_at"],
+                username=row["username"])
 
 
 def get(conn: sqlite3.Connection, user_id: int) -> User | None:
@@ -116,6 +120,36 @@ def rename(conn: sqlite3.Connection, user_id: int, display_name: str, *, commit:
     if get(conn, user_id) is None:
         raise UserError(f"no user {user_id}")
     conn.execute("UPDATE users SET display_name = ? WHERE id = ?", (display_name, user_id))
+    if commit:
+        conn.commit()
+    return get(conn, user_id)
+
+
+def clean_username(username: str) -> str | None:
+    """A username, or None to clear it: trimmed, lowercased, then checked."""
+    username = username.strip().lower()
+    if not username:
+        return None
+    if not _USERNAME_RE.match(username):
+        raise UserError(
+            "usernames are 2 to 24 lowercase letters, digits, _ or -, starting with a letter or digit"
+        )
+    return username
+
+
+def set_username(conn: sqlite3.Connection, user_id: int, username: str, *, commit: bool = True) -> User:
+    """Set or clear (empty) a person's username, unique ignoring case."""
+    cleaned = clean_username(username)
+    user = get(conn, user_id)
+    if user is None:
+        raise UserError(f"no user {user_id}")
+    if cleaned is not None:
+        other = conn.execute(
+            "SELECT id FROM users WHERE username = ? AND id != ?", (cleaned, user_id)
+        ).fetchone()
+        if other is not None:
+            raise UserError(f"@{cleaned} is taken")
+    conn.execute("UPDATE users SET username = ? WHERE id = ?", (cleaned, user_id))
     if commit:
         conn.commit()
     return get(conn, user_id)

@@ -29,6 +29,7 @@ from markupsafe import Markup, escape
 from mtgtracker import confirm, db
 from mtgtracker.cardinfo import BASIC_LAND_NAMES, SECTION_ORDER
 from mtgtracker.money import format_cents
+from mtgtracker.play import routes as play_routes
 from mtgtracker.web import filters, middleware, queries
 from mtgtracker.web.api import v1 as api_v1
 from mtgtracker.web.auth import DEV_COOKIE, AccessVerifier, AuthConfig
@@ -46,7 +47,8 @@ from mtgtracker.web.routes import (
 )
 
 WEB_DIR = Path(__file__).parent
-templates = Jinja2Templates(directory=WEB_DIR / "templates")
+# The play module (mtgtracker/play) keeps its own templates.
+templates = Jinja2Templates(directory=[WEB_DIR / "templates", WEB_DIR.parent / "play" / "templates"])
 
 
 templates.env.filters["money"] = format_cents
@@ -169,6 +171,7 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
 
     for module in (pages, decks, people, modify, assemble, exports, printings, purchases, suggestions):
         app.include_router(module.router)
+    app.include_router(play_routes.router)
     api_v1.install(app)
 
     return app

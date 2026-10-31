@@ -64,8 +64,18 @@ def profile(
 async def profile_save(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     form = await request.form()
     try:
-        notice, summary = people_service.rename_person(conn, me(request), str(form.get("display_name", "")))
+        notice, summary = people_service.rename_person(
+            conn, me(request), str(form.get("display_name", "")), commit=False
+        )
+        if "username" in form:
+            person = users.get(conn, me(request).id)
+            username = str(form.get("username", ""))
+            _, handle = people_service.change_username(conn, person, username, commit=False)
+            if handle != "Saved (no change)":
+                summary = handle if summary == "Saved (no change)" else f"{summary}; {handle}"
+        conn.commit()
     except ServiceError as exc:
+        conn.rollback()
         return redirect("/profile", error=str(exc))
     request.state.audit_notice = summary
     return redirect("/profile", notice=notice)
