@@ -1,6 +1,7 @@
 """Play (mtgtracker/play): the play page, starting and ending games on a fake game server, results coming
 back, usernames and the people list, and importing the game server's old history."""
 
+import gzip
 import json
 from urllib.parse import parse_qs, urlsplit
 
@@ -161,6 +162,7 @@ def test_start_hands_the_game_server_your_decklist_and_sends_you_to_the_table(cl
     assert ais == [{"kind": "ai", "opponent": "neyali"}, {"kind": "ai", "opponent": "jeleva"}]
     assert spec["returnUrl"] == "/play"
     assert spec["resultsUrl"] == "http://tracker.test/play/results"
+    assert spec["replayUrl"] == "http://tracker.test/play/replays"
     conn = db.connect(db_path)
     row = conn.execute("SELECT * FROM play_games").fetchone()
     assert (row["match_id"], row["host_id"], row["status"], row["ticket"]) == ("m1", 1, "playing", "t10" * 4)
@@ -354,3 +356,58 @@ def test_import_the_game_servers_old_history(db_path):
     )
     assert [o["name"] for o in game["opponents"]] == ["Neyali", "Jeleva"]
     conn.close()
+
+
+REPLAY = gzip.compress(b'{"replay":1,"matchId":"0123456789abcdef","seat":0}\n{"ms":5,"m":{"t":"state"}}\n')
+
+
+def _upload(client, path, body=REPLAY, secret=SECRET):
+    headers = {"Authorization": f"Bearer {secret}"} if secret else {}
+    return client.post(path, content=body, headers=headers)
+
+
+def test_a_replay_is_kept_and_its_host_can_download_it(client, forge, db_path):
+    conn = db.connect(db_path)
+    games.record_start(
+        conn, match_id="0123456789abcdef", host_id=1, format="commander", deck_id=None,
+        deck_name="Reign of Dragons", opponents=[{"name": "Neyali", "deck": "Rebellion Rising"}], ticket=None,
+    )
+    conn.close()
+    assert _upload(client, "/play/replays/0123456789abcdef/0").status_code == 204
+    assert (db_path.parent / "replays" / "0123456789abcdef-0.jsonl.gz").read_bytes() == REPLAY
+    page = client.get("/play")
+    assert 'href="/play/games/0123456789abcdef/replay/0"' in page.text
+    got = client.get("/play/games/0123456789abcdef/replay/0")
+    assert got.status_code == 200
+    assert got.content == REPLAY
+    assert client.get("/play/games/0123456789abcdef/replay/1").status_code == 404
+
+
+def test_replay_uploads_are_checked(client, forge, db_path):
+    assert _upload(client, "/play/replays/0123456789abcdef/0", secret="wrong").status_code == 401
+    assert _upload(client, "/play/replays/0123456789abcdef/0", secret=None).status_code == 401
+    assert _upload(client, "/play/replays/..%2F..%2Fmtgtracker/0").status_code in (400, 404)
+    assert _upload(client, "/play/replays/0123456789ABCDEF/0").status_code == 400
+    assert _upload(client, "/play/replays/0123456789abcdef/9").status_code == 400
+    assert _upload(client, "/play/replays/0123456789abcdef/0", body=b"not gzip").status_code == 400
+    assert not (db_path.parent / "replays").exists()
+
+
+def test_someone_elses_replay_is_not_found(db_path, forge):
+    conn = db.connect(db_path)
+    games.record_start(
+        conn, match_id="0123456789abcdef", host_id=1, format="commander", deck_id=None,
+        deck_name="Reign of Dragons", opponents=[], ticket=None,
+    )
+    friend = users.create(conn, "Alex", "alex@example.com")
+    conn.close()
+    games.save_replay(db_path, "0123456789abcdef", 0, REPLAY)
+    other = TestClient(create_app(db_path, auth=AuthConfig(mode="dev")))
+    other.cookies.set(DEV_COOKIE, str(friend.id))
+    assert other.get("/play/games/0123456789abcdef/replay/0").status_code == 404
+
+
+def test_replays_need_no_sign_in(db_path, forge, signer):  # noqa: F811
+    client = _cf_client(db_path, signer)
+    assert _upload(client, "/play/replays/0123456789abcdef/0").status_code == 204
+    assert client.get("/play/games/0123456789abcdef/replay/0").status_code == 401

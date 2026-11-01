@@ -78,10 +78,12 @@ def install(app: FastAPI) -> None:
     async def identify(request: Request, call_next):
         """Who's asking (web/auth.py): request.state.user is the principal,
         request.state.actor who really asks. Static files, the kubelet's
-        /healthz probe and the game server's /play/results need no identity. After the
+        /healthz probe and the game server's /play/results and /play/replays/ need no identity. After the
         response, a successful write is audited."""
-        # /play/results is the game server posting a result with its shared secret (mtgtracker/play).
-        if not (request.url.path.startswith("/static/") or request.url.path in ("/healthz", "/play/results")):
+        # /play/results and /play/replays/ are the game server posting results and replays with its
+        # shared secret (mtgtracker/play).
+        path = request.url.path
+        if not (path.startswith(("/static/", "/play/replays/")) or path in ("/healthz", "/play/results")):
             state = request.app.state
             conn = db.connect(state.db_path, check_same_thread=False)
             try:

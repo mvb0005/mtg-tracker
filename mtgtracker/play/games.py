@@ -4,10 +4,45 @@ completed by the game server's result, matched by match_id."""
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import UTC, datetime
+from pathlib import Path
 
 STATUSES = ("finished", "ended", "abandoned")
+
+
+MATCH_ID = re.compile(r"[0-9a-f]{16}")
+MAX_REPLAY = 64 << 20
+GZIP_MAGIC = b"\x1f\x8b"
+
+
+def replay_path(db_path: str | Path, match_id: str, seat: int) -> Path | None:
+    """Where a seat's replay of a match lives: replays/ beside the database. None for an id that isn't one
+    (it becomes part of a file name)."""
+    if not MATCH_ID.fullmatch(match_id) or not 0 <= seat < 8:
+        return None
+    return Path(db_path).parent / "replays" / f"{match_id}-{seat}.jsonl.gz"
+
+
+def save_replay(db_path: str | Path, match_id: str, seat: int, data: bytes) -> Path:
+    path = replay_path(db_path, match_id, seat)
+    if path is None:
+        raise ValueError("Not a match id and seat")
+    if not data.startswith(GZIP_MAGIC):
+        raise ValueError("A replay is gzipped")
+    if len(data) > MAX_REPLAY:
+        raise ValueError("Replay too large")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".part")
+    tmp.write_bytes(data)
+    tmp.replace(path)
+    return path
+
+
+def replay_seats(db_path: str | Path, match_id: str) -> list[int]:
+    """The seats with a replay of this match."""
+    return [s for s in range(8) if (p := replay_path(db_path, match_id, s)) is not None and p.exists()]
 
 
 def _now() -> str:
