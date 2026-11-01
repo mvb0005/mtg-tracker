@@ -41,6 +41,7 @@ class User:
     disabled: bool = False
     created_at: str | None = None
     username: str | None = None
+    discord_id: str | None = None  # linked Discord account (mtgtracker/discord)
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,7 @@ def _user(row: sqlite3.Row | None) -> User | None:
     return User(id=row["id"], email=row["email"], display_name=row["display_name"],
                 is_admin=bool(row["is_admin"]), signed_in=row["last_seen_at"] is not None,
                 kind=row["kind"], disabled=row["disabled_at"] is not None, created_at=row["created_at"],
-                username=row["username"])
+                username=row["username"], discord_id=row["discord_id"])
 
 
 def get(conn: sqlite3.Connection, user_id: int) -> User | None:
