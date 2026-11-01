@@ -2,7 +2,8 @@
 
 Configured from the environment: FORGE_CONTROL_URL (e.g. http://forge-control.forge.svc.cluster.local),
 FORGE_CONTROL_SECRET (shared with the game server; it also signs the results it posts back here), and
-FORGE_TABLE_URL, where players open the table (default /play/table/, on this site's hostname). Without
+FORGE_TABLE_URL, where players open the table (default /play/table/, on this site's hostname); each game is
+at <table url><match id>/. Without
 FORGE_CONTROL_URL there is no game server, and the play page says so.
 """
 
@@ -37,7 +38,7 @@ class GameServer:
         return cls(
             base,
             os.environ.get("FORGE_CONTROL_SECRET") or None,
-            os.environ.get("FORGE_TABLE_URL", "").strip() or "/play/table/",
+            (os.environ.get("FORGE_TABLE_URL", "").strip() or "/play/table").rstrip("/") + "/",
         )
 
     def _call(self, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
@@ -78,5 +79,5 @@ class GameServer:
         """True if that match was running and is ending now."""
         return self._call("DELETE", f"/match/{match_id}")[0] == 202
 
-    def table_link(self, ticket: str) -> str:
-        return f"{self.table_url}?ticket={ticket}"
+    def table_link(self, match_id: str, ticket: str) -> str:
+        return f"{self.table_url}{match_id}/?ticket={ticket}"
