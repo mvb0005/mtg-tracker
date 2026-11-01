@@ -98,10 +98,14 @@ def test_the_activity_page_loads_its_own_files(client, discord):
     page = client.get("/discord/")
     assert page.status_code == 200
     assert 'data-client-id="662512381221535764"' in page.text
-    assert 'href="static/activity.css"' in page.text
-    assert 'src="static/activity.js"' in page.text
+    assert 'href="static/activity.css?v=' in page.text
+    assert 'src="static/activity.js?v=' in page.text
+    assert page.headers["cache-control"] == "no-cache"
     assert client.get("/discord", follow_redirects=False).headers["location"] == "/discord/"
-    assert client.get("/discord/static/activity.js").status_code == 200
+    script = client.get("/discord/static/activity.js?v=x")
+    assert script.status_code == 200
+    assert "immutable" in script.headers["cache-control"]
+    assert client.get("/discord/static/activity.js").headers["cache-control"] == "no-cache"
     sdk = client.get("/discord/static/discord-sdk.js")
     assert sdk.status_code == 200
     assert "DiscordSDK" in sdk.text
