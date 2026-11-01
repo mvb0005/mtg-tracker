@@ -7,6 +7,7 @@ from __future__ import annotations
 import hmac
 import os
 import sqlite3
+from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -101,42 +102,58 @@ def play_page(
     )
 
 
-@router.post("/play/start")
-async def play_start(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    person = me(request)
-    form = await request.form()
-    deck_id = form_int(form.get("deck_id"))
-    picked = [str(o) for o in form.getlist("opponent") if str(o).strip()]
-    if deck_id is None:
-        return redirect("/play", error="Pick one of your decks")
-    if not 1 <= len(picked) <= MAX_OPPONENTS:
-        return redirect("/play", error=f"Pick one to {MAX_OPPONENTS} opponents")
-    deck = require_own_deck(conn, deck_id, person)
-    if not deck["commander"]:
-        return redirect("/play", error=f"{deck['name']} has no commander. Pick one on its deck page.")
+MAX_SEATS = 4
+
+
+@dataclass(frozen=True)
+class Seat:
+    """A human seat: who sits there (a tracker person id, or another id the game server only echoes back),
+    their name at the table, and the deck they play (a tracker deck with a commander)."""
+
+    name: str
+    person: str
+    deck_id: int
+
+
+def start_table(
+    conn: sqlite3.Connection, host, seats: list[Seat], picked: list[str], *, return_url: str
+) -> tuple[dict, dict[str, str]]:
+    """Starts a Commander game: the human seats, then the curated AI opponents in `picked`, 2 to MAX_SEATS
+    seats in all, recorded in play_games under `host` (a tracker person) with the first seat's deck. Deck
+    access is the caller's to check. Returns the game server's answer and each human seat's ticket by its
+    `person`. Raises ServiceError with a message for the people at the table (the play page and the Discord
+    Activity both start games)."""
+    if not seats:
+        raise ServiceError("Nobody is sitting down")
+    if not 2 <= len(seats) + len(picked) <= MAX_SEATS:
+        raise ServiceError(f"A game needs 2 to {MAX_SEATS} players, AIs included")
+    decks = []
+    for seat in seats:
+        deck = conn.execute("SELECT * FROM decks WHERE id = ?", (seat.deck_id,)).fetchone()
+        if deck is None:
+            raise ServiceError(f"{seat.name} hasn't picked a deck")
+        if not deck["commander"]:
+            raise ServiceError(f"{deck['name']} has no commander. Pick one on its deck page.")
+        detail = queries.get_deck(conn, seat.deck_id, viewer_id=deck["owner_id"])
+        decks.append((deck, queries.deck_exports(detail)["decklist"]))
     where = tables.from_env()
     if where is None:
-        return redirect("/play", error="No game server is set up for this tracker")
-    detail = queries.get_deck(conn, deck_id, viewer_id=person.id)
-    decklist = queries.deck_exports(detail)["decklist"]
+        raise ServiceError("No game server is set up for this tracker")
     try:
         roster = {o["id"]: o for o in where.lobby().opponents()}
         unknown = [o for o in picked if o not in roster]
         if unknown:
-            return redirect("/play", error=f"Unknown opponent {unknown[0]}")
+            raise ServiceError(f"Unknown opponent {unknown[0]}")
         _settle(conn, where)
         spec = {
             "format": "commander",
             "seats": [
-                {
-                    "kind": "human",
-                    "name": person.display_name,
-                    "person": str(person.id),
-                    "deck": {"name": deck["name"], "list": decklist},
-                }
+                {"kind": "human", "name": seat.name, "person": seat.person,
+                 "deck": {"name": deck["name"], "list": decklist}}
+                for seat, (deck, decklist) in zip(seats, decks, strict=True)
             ]
             + [{"kind": "ai", "opponent": o} for o in picked],
-            "returnUrl": "/play",
+            "returnUrl": return_url,
         }
         # Where the game server reaches this tracker in-cluster (e.g. http://mtgtracker.mtgtracker.svc.cluster.local).
         results_base = os.environ.get("PLAY_RESULTS_URL", "").strip()
@@ -144,40 +161,69 @@ async def play_start(request: Request, conn: sqlite3.Connection = Depends(get_co
             spec["resultsUrl"] = results_base.rstrip("/") + RESULTS_PATH
             spec["replayUrl"] = results_base.rstrip("/") + REPLAYS_PATH
         started = where.start(spec)
-    except Busy:
+    except Busy as exc:
         conn.commit()
         if where.capacity > 1:
-            return redirect(
-                "/play", error=f"All {where.capacity} tables are in use. Try again when a game ends."
-            )
+            raise ServiceError(
+                f"All {where.capacity} tables are in use. Try again when a game ends."
+            ) from exc
         try:
             who = ", ".join(_who(t) for t in where.running()) or "Someone"
         except ServiceError:
             who = "Someone"
-        return redirect(
-            "/play", error=f"{who} is playing on the game server right now. It hosts one game at a time."
-        )
-    except ServiceError as exc:
+        raise ServiceError(
+            f"{who} is playing on the game server right now. It hosts one game at a time."
+        ) from exc
+    except ServiceError:
         conn.commit()
-        return redirect("/play", error=str(exc))
-    ticket = next(
-        (s["ticket"] for s in started["seats"] if s.get("person") == str(person.id) and s.get("ticket")), None
-    )
-    names = [s["name"] for s in started["seats"] if s["kind"] == "ai"]
+        raise
+    tickets = {s["person"]: s["ticket"] for s in started["seats"] if s.get("ticket") and s.get("person")}
+    others = [s for s in started["seats"] if s["kind"] == "human"][1:]
     games.record_start(
         conn,
         match_id=started["matchId"],
-        host_id=person.id,
+        host_id=host.id,
         format="commander",
-        deck_id=deck_id,
-        deck_name=deck["name"],
-        opponents=[
+        deck_id=seats[0].deck_id,
+        deck_name=decks[0][0]["name"],
+        opponents=[{"name": s["name"], "deck": d[0]["name"]} for s, d in zip(others, decks[1:], strict=True)]
+        + [
             {"name": s["name"], "deck": roster[o]["deck"]}
             for s, o in zip([s for s in started["seats"] if s["kind"] == "ai"], picked, strict=True)
         ],
-        ticket=ticket,
+        ticket=tickets.get(str(host.id)),
     )
-    request.state.audit_notice = f"Started a game: {deck['name']} against {', '.join(names)}"
+    started["deckName"] = decks[0][0]["name"]
+    return started, tickets
+
+
+def start_game(
+    conn: sqlite3.Connection, person, deck_id: int | None, picked: list[str], *, return_url: str
+) -> tuple[dict, str]:
+    """A goldfish game from the play page: the person's own deck against 1 to MAX_OPPONENTS curated
+    opponents. Returns the game server's answer and the person's seat ticket."""
+    if deck_id is None:
+        raise ServiceError("Pick one of your decks")
+    if not 1 <= len(picked) <= MAX_OPPONENTS:
+        raise ServiceError(f"Pick one to {MAX_OPPONENTS} opponents")
+    require_own_deck(conn, deck_id, person)
+    seat = Seat(person.display_name, str(person.id), deck_id)
+    started, tickets = start_table(conn, person, [seat], picked, return_url=return_url)
+    return started, tickets.get(str(person.id))
+
+
+@router.post("/play/start")
+async def play_start(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    person = me(request)
+    form = await request.form()
+    picked = [str(o) for o in form.getlist("opponent") if str(o).strip()]
+    try:
+        started, ticket = start_game(conn, person, form_int(form.get("deck_id")), picked, return_url="/play")
+    except ServiceError as exc:
+        return redirect("/play", error=str(exc))
+    names = [s["name"] for s in started["seats"] if s["kind"] == "ai"]
+    where = tables.from_env()
+    request.state.audit_notice = f"Started a game: {started['deckName']} against {', '.join(names)}"
     return RedirectResponse(where.table_link(started["matchId"], ticket), status_code=303)
 
 

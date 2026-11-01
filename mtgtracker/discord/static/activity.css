@@ -1,0 +1,47 @@
+/* The Discord Activity's lobby: the tracker's dark tokens (style.css), on its own because inside Discord
+   only /discord/ is reachable. */
+:root {
+  --bg: #141412;
+  --surface: #1c1b19;
+  --text: #ece8df;
+  --muted: #9e988c;
+  --border: #35322c;
+  --accent: #7aaef0;
+  --warn: #e2bf62;
+  --bad: #f08a80;
+  --font-display: "Spectral", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var(--font-body); }
+main { max-width: 720px; margin: 0 auto; padding: 20px 16px 40px; }
+h1, h2 { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; margin: 0 0 8px; }
+h1 { font-size: 1.6rem; }
+h2 { font-size: 1.15rem; margin-top: 22px; }
+p { margin: 6px 0; }
+.status { color: var(--muted); }
+.error { color: var(--bad); }
+.code {
+  display: inline-block; margin: 10px 0; padding: 10px 16px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); font: 600 1.6rem/1 ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing: 0.08em;
+}
+ul.choices { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+ul.choices label {
+  display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: start; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface); cursor: pointer;
+}
+ul.choices label:has(input:checked) { border-color: var(--accent); }
+ul.choices label.disabled { opacity: 0.55; cursor: default; }
+ul.choices input { grid-row: span 2; margin-top: 3px; accent-color: var(--accent); }
+.name { font-weight: 600; }
+.meta { grid-column: 2; color: var(--muted); font-size: 0.88rem; }
+.actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 16px; }
+button, a.button {
+  font: 600 0.95rem var(--font-body); padding: 9px 16px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); cursor: pointer; text-decoration: none;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: #0d1a2b; }
+button:disabled { opacity: 0.5; cursor: default; }
+.game { padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); margin-bottom: 8px; }
+.player { display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }

@@ -31,7 +31,7 @@ build-backend = "setuptools.build_meta"
 include = ["mtgtracker*"]
 
 [tool.setuptools.package-data]
-mtgtracker = ["migrations/*.sql", "web/templates/*.html", "web/static/*", "play/templates/*.html"]
+mtgtracker = ["migrations/*.sql", "web/templates/*.html", "web/static/*", "play/templates/*.html", "discord/templates/*.html", "discord/static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

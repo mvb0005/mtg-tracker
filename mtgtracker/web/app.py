@@ -28,6 +28,7 @@ from markupsafe import Markup, escape
 
 from mtgtracker import confirm, db
 from mtgtracker.cardinfo import BASIC_LAND_NAMES, SECTION_ORDER
+from mtgtracker.discord import routes as discord_routes
 from mtgtracker.money import format_cents
 from mtgtracker.play import routes as play_routes
 from mtgtracker.web import filters, middleware, queries
@@ -47,8 +48,10 @@ from mtgtracker.web.routes import (
 )
 
 WEB_DIR = Path(__file__).parent
-# The play module (mtgtracker/play) keeps its own templates.
-templates = Jinja2Templates(directory=[WEB_DIR / "templates", WEB_DIR.parent / "play" / "templates"])
+# The play and discord modules (mtgtracker/play, mtgtracker/discord) keep their own templates.
+templates = Jinja2Templates(directory=[
+    WEB_DIR / "templates", WEB_DIR.parent / "play" / "templates", WEB_DIR.parent / "discord" / "templates"
+])
 
 
 templates.env.filters["money"] = format_cents
@@ -146,6 +149,10 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
         raise ValueError("MTG_CONFIRM_SECRET must be at least 16 characters")
     app.state.confirm_secret = secret.encode() or secrets.token_bytes(32)
     app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
+    # The Discord Activity's own files: inside Discord only /discord/ is reachable (mtgtracker/discord).
+    app.mount(
+        "/discord/static", StaticFiles(directory=WEB_DIR.parent / "discord" / "static"), name="discord-static"
+    )
 
     middleware.install(app)
 
@@ -172,6 +179,7 @@ def create_app(db_path: str | Path, *, auth: AuthConfig | None = None, jwks_clie
     for module in (pages, decks, people, modify, assemble, exports, printings, purchases, suggestions):
         app.include_router(module.router)
     app.include_router(play_routes.router)
+    discord_routes.install(app)
     api_v1.install(app)
 
     return app

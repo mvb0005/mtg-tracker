@@ -73,6 +73,22 @@ spec:
                   name: forge-control
                   key: secret
                   optional: true
+            # The Discord Activity (mtgtracker/discord): the application's id and secret, from the Secret
+            # discord-activity (keys clientId, clientSecret; never committed), and the server whose members may play.
+            - name: DISCORD_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: discord-activity
+                  key: clientId
+                  optional: true
+            - name: DISCORD_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: discord-activity
+                  key: clientSecret
+                  optional: true
+            - name: DISCORD_GUILD_ID
+              value: "616087028823621642"
           ports:
             - name: http
               containerPort: 8000
