@@ -1,6 +1,6 @@
 """/play: pick a deck and AI opponents, start a game on a game server (tables.py), rejoin or end it, and
-the games so far. /play/results is where a game server posts each match's result (its shared secret, no
-sign-in)."""
+the games so far. /play/results and /play/replays/<match>/<seat> are where a game server posts each
+match's result and each seat's replay (its shared secret, no sign-in)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import os
 import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from mtgtracker import db
 from mtgtracker.play import games, tables
@@ -22,6 +22,7 @@ from mtgtracker.web.deps import form_int, get_conn, me, redirect, render, requir
 router = APIRouter()
 MAX_OPPONENTS = 3
 RESULTS_PATH = "/play/results"
+REPLAYS_PATH = "/play/replays"
 
 
 def _settle(conn: sqlite3.Connection, where: tables.OneServer | tables.Pods) -> None:
@@ -91,7 +92,10 @@ def play_page(
         capacity=capacity,
         can_end_any=person.is_admin,
         table_link=where.table_link if where else None,
-        recent=games.recent(conn, person.id),
+        recent=[
+            dict(g, replays=games.replay_seats(request.app.state.db_path, g["match_id"]))
+            for g in games.recent(conn, person.id)
+        ],
         notice=notice,
         error=error,
     )
@@ -138,6 +142,7 @@ async def play_start(request: Request, conn: sqlite3.Connection = Depends(get_co
         results_base = os.environ.get("PLAY_RESULTS_URL", "").strip()
         if results_base:
             spec["resultsUrl"] = results_base.rstrip("/") + RESULTS_PATH
+            spec["replayUrl"] = results_base.rstrip("/") + REPLAYS_PATH
         started = where.start(spec)
     except Busy:
         conn.commit()
@@ -202,11 +207,10 @@ async def play_end(request: Request, conn: sqlite3.Connection = Depends(get_conn
     return redirect("/play", notice="The game is ending." if ended else "That game had already ended.")
 
 
-@router.post(RESULTS_PATH)
-async def play_results(request: Request):
-    """The game server's result for a match (forge-gui-web PROTOCOL.md "Results"), with the shared control
-    secret. Outside the sign-in middleware: the game server is not a person. Without a secret configured,
-    only a loopback caller (local development) is believed."""
+def _not_the_game_server(request: Request) -> JSONResponse | None:
+    """None when the caller has the shared control secret (or, with no secret configured, is loopback: local
+    development), else the 401 to send. These routes are outside the sign-in middleware: the game server
+    is not a person."""
     secret = tables.control_secret()
     sent = request.headers.get("authorization", "").encode()
     if secret:
@@ -218,6 +222,15 @@ async def play_results(request: Request):
         return JSONResponse(
             {"error": {"code": "unauthorized", "message": "No secret configured"}}, status_code=401
         )
+    return None
+
+
+@router.post(RESULTS_PATH)
+async def play_results(request: Request):
+    """The game server's result for a match (forge-gui-web PROTOCOL.md "Results")."""
+    refused = _not_the_game_server(request)
+    if refused:
+        return refused
     try:
         body = await request.json()
     except ValueError:
@@ -230,3 +243,34 @@ async def play_results(request: Request):
     finally:
         conn.close()
     return Response(status_code=204)
+
+
+@router.post(REPLAYS_PATH + "/{match_id}/{seat}")
+async def play_replay_upload(match_id: str, seat: int, request: Request):
+    """One seat's replay of a match (forge-gui-web PROTOCOL.md "Replays"), gzipped JSON lines, kept as a
+    file beside the database. A second upload of the same seat replaces the first."""
+    refused = _not_the_game_server(request)
+    if refused:
+        return refused
+    try:
+        games.save_replay(request.app.state.db_path, match_id, seat, await request.body())
+    except ValueError as exc:
+        return JSONResponse({"error": {"code": "bad_request", "message": str(exc)}}, status_code=400)
+    return Response(status_code=204)
+
+
+@router.get("/play/games/{match_id}/replay/{seat}")
+def play_replay_download(
+    match_id: str, seat: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """A replay file, for the game's host or an admin."""
+    person = me(request)
+    game = conn.execute("SELECT host_id FROM play_games WHERE match_id = ?", (match_id,)).fetchone()
+    if game is None or (game["host_id"] != person.id and not person.is_admin):
+        raise HTTPException(status_code=404, detail="No such game")
+    path = games.replay_path(request.app.state.db_path, match_id, seat)
+    if path is None or not path.exists():
+        raise HTTPException(status_code=404, detail="No replay for that game")
+    return FileResponse(
+        path, media_type="application/gzip", filename=f"forge-replay-{match_id}-seat{seat}.jsonl.gz"
+    )

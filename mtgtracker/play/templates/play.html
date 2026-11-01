@@ -83,7 +83,7 @@
       <td class="play-when">{{ g.started_at[:16] | replace("T", " ") }}</td>
       <td>{{ g.deck_name }}</td>
       <td>{{ g.opponents | map(attribute="name") | join(", ") }}</td>
-      <td>{% if g.status == "playing" %}<span class="tag ok">Playing</span>{% elif g.status == "abandoned" %}<span class="tag">Abandoned</span>{% elif g.status == "ended" %}<span class="tag">Ended</span>{% else %}{{ g.summary or "Finished" }}{% endif %}</td>
+      <td>{% if g.status == "playing" %}<span class="tag ok">Playing</span>{% elif g.status == "abandoned" %}<span class="tag">Abandoned</span>{% elif g.status == "ended" %}<span class="tag">Ended</span>{% else %}{{ g.summary or "Finished" }}{% endif %}{% for seat in g.replays %} · <a href="/play/games/{{ g.match_id }}/replay/{{ seat }}">replay</a>{% endfor %}</td>
     </tr>
   {% endfor %}
   </tbody>
