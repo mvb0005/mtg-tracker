@@ -149,7 +149,7 @@ def test_start_hands_the_game_server_your_decklist_and_sends_you_to_the_table(cl
     deck = _deck(db_path)
     res = _start(client, deck["id"], "neyali", "jeleva")
     assert res.status_code == 303
-    assert res.headers["location"] == "/play/table/?ticket=" + "t10" * 4
+    assert res.headers["location"] == "/play/table/m1/?ticket=" + "t10" * 4
     spec = forge.specs[0]
     assert spec["version"] == 1
     assert spec["format"] == "commander"
@@ -171,6 +171,7 @@ def test_start_hands_the_game_server_your_decklist_and_sends_you_to_the_table(cl
     # The play page now offers the way back to the table, and to end it.
     page = client.get("/play")
     assert "Back to the table" in page.text
+    assert "/play/table/m1/?ticket=" in page.text
     assert "t10" * 4 in page.text
     assert "End this game" in page.text
 

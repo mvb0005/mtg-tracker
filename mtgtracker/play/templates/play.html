@@ -13,7 +13,7 @@
   {% if mine %}
     <p><strong>{{ mine.deck_name }}</strong> against {{ mine.opponents | map(attribute="name") | join(", ") }}, started {{ mine.started_at[:16] | replace("T", " ") }} UTC.</p>
     <div class="play-actions">
-      {% if mine.ticket and table_link %}<a class="btn primary" href="{{ table_link(mine.ticket) }}">Back to the table</a>{% endif %}
+      {% if mine.ticket and table_link %}<a class="btn primary" href="{{ table_link(mine.match_id, mine.ticket) }}">Back to the table</a>{% endif %}
       <form method="post" action="/play/end"><input type="hidden" name="match_id" value="{{ mine.match_id }}"><button type="submit" class="btn">End this game</button></form>
     </div>
   {% else %}

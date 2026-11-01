@@ -159,7 +159,7 @@ async def play_start(request: Request, conn: sqlite3.Connection = Depends(get_co
         ticket=ticket,
     )
     request.state.audit_notice = f"Started a game: {deck['name']} against {', '.join(names)}"
-    return RedirectResponse(server.table_link(ticket), status_code=303)
+    return RedirectResponse(server.table_link(started["matchId"], ticket), status_code=303)
 
 
 @router.post("/play/end")
