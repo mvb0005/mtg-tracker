@@ -70,19 +70,24 @@ async function call(path, body) {
   return { status: res.status, data };
 }
 
+// Discord can stall without an answer (a scope it won't grant silently, a stuck client): say so rather than spin.
+const within = (ms, p, what) =>
+  Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(`${what} didn't answer. Close the Activity and open it again.`)), ms))]);
+
 async function signIn() {
   if (!sdk) {
     sdk = new DiscordSDK(clientId);
-    await sdk.ready();
+    await within(15000, sdk.ready(), 'Discord');
     instanceId = sdk.instanceId;
   }
-  const { code } = await sdk.commands.authorize({
+  // Only what the lobby needs; the table asks for voice (who is talking) itself, and may show Discord's prompt.
+  const { code } = await within(15000, sdk.commands.authorize({
     client_id: clientId,
     response_type: 'code',
     state: '',
     prompt: 'none',
-    scope: ['identify', 'guilds.members.read', 'rpc.voice.read'],
-  });
+    scope: ['identify', 'guilds.members.read'],
+  }), 'Discord sign-in');
   const { status, data } = await call('session', { code });
   if (status !== 200) throw new Error(data.error?.message || `Sign-in failed (${status})`);
   session = data.session;

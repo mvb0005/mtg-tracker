@@ -30,7 +30,7 @@ from mtgtracker import users
 from mtgtracker.services import ServiceError, UpstreamError
 
 API = "https://discord.com/api/v10"
-SCOPES = ("identify", "guilds.members.read", "rpc.voice.read")  # voice: the table shows who is talking
+SCOPES = ("identify", "guilds.members.read")  # the table also asks for rpc.voice.read, to show who is talking
 CDN = "https://cdn.discordapp.com"
 SESSION_SECONDS = 12 * 3600
 MAX_CODE = 512
