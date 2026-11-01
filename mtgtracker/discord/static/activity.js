@@ -1,9 +1,12 @@
 // The Discord Activity's lobby (mtgtracker/discord): sign in through Discord, then one room per Activity
 // instance. Everyone in it sees who is here and which deck each picked, shares one set of AI opponents, and
-// anyone can start: the game seats everyone with a deck plus the AIs, and each page goes to its own seat.
+// anyone can start: the game seats everyone with a deck plus the AIs, and each page opens its own seat.
 // Inside Discord every request goes through Discord's proxy: the tracker's API under /.proxy/ (the root URL
 // mapping is the tracker's /discord/) and the table under /.proxy/table/ (mapped to /play/table/).
-import { DiscordSDK } from './discord-sdk.js?v=2.5.0'; // the vendored SDK's version: change it with the file
+// Discord's connection belongs to this page and can't be made again by another one, so the table opens in a
+// frame over the lobby, which stays loaded: it follows who is talking and tells the table (postMessage), and
+// the table asks it to close the frame to come back.
+import { DiscordSDK, Events } from './discord-sdk.js?v=2.5.0'; // the vendored SDK's version: change it with the file
 
 const clientId = document.body.dataset.clientId;
 const inDiscord = (() => {
@@ -14,15 +17,7 @@ const inDiscord = (() => {
   }
 })();
 const api = (path) => (inDiscord ? `/.proxy/api/${path}` : `api/${path}`);
-// Discord's launch query (frame_id, instance_id, ...) goes along to the table, with the application's id: the
-// table page starts the SDK too, to show who is talking.
-const launch = new URLSearchParams(location.search);
-const tableUrl = (id, ticket) => {
-  const q = new URLSearchParams(launch);
-  q.set('ticket', ticket);
-  if (inDiscord) q.set('app', clientId);
-  return `${inDiscord ? '/.proxy/table/' : '../play/table/'}${id}/?${q}`;
-};
+const tableUrl = (id, ticket) => `${inDiscord ? '/.proxy/table/' : '../play/table/'}${id}/?ticket=${encodeURIComponent(ticket)}`;
 const face = (url) => (url && inDiscord ? url.replace('https://cdn.discordapp.com/', '/.proxy/cdn/') : url);
 const POLL_MS = 1500;
 
@@ -32,7 +27,68 @@ let sdk = null;
 let instanceId = null;
 let room = null;
 let sent = 0; // the last change we sent: a poll answered before it landed is stale
-let leaving = false;
+let table = null; // the open table's frame, and its match
+let closed = null; // the match whose table this player closed: not reopened by itself
+const speaking = new Set(); // Discord user ids talking in the voice channel now
+
+function openTable(matchId, ticket) {
+  if (table?.matchId === matchId) return;
+  closeTable();
+  const frame = el('iframe', { src: tableUrl(matchId, ticket), title: 'The table', allow: 'autoplay; clipboard-write' });
+  frame.className = 'table-frame';
+  frame.addEventListener('load', () => tellTable());
+  document.body.append(frame);
+  table = { matchId, frame };
+}
+
+function closeTable() {
+  if (!table) return;
+  closed = table.matchId;
+  table.frame.remove();
+  table = null;
+  if (room) render();
+}
+
+function tellTable() {
+  table?.frame.contentWindow?.postMessage({ type: 'forge-speaking', ids: [...speaking] }, location.origin);
+}
+
+window.addEventListener('message', (e) => {
+  if (e.origin !== location.origin || e.source !== table?.frame.contentWindow) return;
+  if (e.data?.type === 'forge-back') closeTable();
+  if (e.data?.type === 'forge-hello') tellTable();
+});
+
+function trace(step, detail = '') {
+  fetch(api('trace'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ step, detail }) }).catch(() => {});
+}
+
+/** Who is talking, for the table's faces: needs the voice scope, which Discord asks the player for once. */
+async function listenForVoice() {
+  try {
+    const { code } = await sdk.commands.authorize({
+      client_id: clientId,
+      response_type: 'code',
+      state: '',
+      scope: ['identify', 'guilds.members.read', 'rpc.voice.read'],
+    });
+    const { status, data } = await call('session', { code });
+    if (status !== 200) return trace('voice session refused', String(status));
+    session = data.session;
+    await sdk.commands.authenticate({ access_token: data.accessToken });
+    if (!sdk.channelId) return trace('voice: no channel');
+    const on = (id, talking) => {
+      if (talking) speaking.add(id);
+      else speaking.delete(id);
+      tellTable();
+    };
+    await sdk.subscribe(Events.SPEAKING_START, (e) => on(e.user_id, true), { channel_id: sdk.channelId });
+    await sdk.subscribe(Events.SPEAKING_STOP, (e) => on(e.user_id, false), { channel_id: sdk.channelId });
+    trace('voice listening', `channel ${sdk.channelId}`);
+  } catch (e) {
+    trace('voice failed', e?.message || JSON.stringify(e));
+  }
+}
 
 function el(tag, attrs = {}, ...children) {
   const e = document.createElement(tag);
@@ -109,11 +165,8 @@ async function send(change = {}) {
 
 function render() {
   const r = room;
-  if (r.started?.ticket && !leaving) {
-    leaving = true;
-    location.href = tableUrl(r.started.matchId, r.started.ticket);
-    return say('Taking your seat…');
-  }
+  if (r.started?.ticket && r.started.matchId !== closed) openTable(r.started.matchId, r.started.ticket);
+  if (!r.started && closed) closed = null; // that game is over: the next one opens by itself again
   const me = r.members.find((m) => m.id === r.you);
   const seated = r.members.filter((m) => m.deck);
   const seats = seated.length + r.opponents.length;
@@ -151,6 +204,9 @@ function render() {
     r.problem ? el('p', { class: 'error' }, r.problem) : null,
     r.started && !r.started.ticket
       ? el('p', { class: 'status' }, 'A game from this lobby is on. You can join the next one.') : null,
+    r.started?.ticket && r.started.matchId === closed
+      ? el('div', { class: 'actions' }, el('button', { class: 'primary', onclick: () => { closed = null; openTable(r.started.matchId, r.started.ticket); } }, 'Back to the table'))
+      : null,
     el('h2', {}, 'Players'),
     players,
     el('h2', {}, 'Your deck'),
@@ -174,6 +230,7 @@ async function main() {
     say('Joining the lobby…');
     await send();
     setInterval(() => send().catch(() => {}), POLL_MS);
+    void listenForVoice();
   } catch (e) {
     say(e.message || String(e), 'error');
   }
