@@ -458,8 +458,10 @@ def serve(
         uvicorn.run("mtgtracker.web.app:app_from_env", factory=True, host=host, port=port, reload=True,
                     proxy_headers=False)
     else:
+        from mtgtracker.play.tables import start_sweeper
         from mtgtracker.web.app import create_app
 
+        start_sweeper()  # game server pods mode: keeps the spare table warm
         # proxy_headers=False: never trust X-Forwarded-For, so a request can't
         # pose as a loopback client (which cloudflare auth treats as the owner).
         uvicorn.run(create_app(db_path), host=host, port=port, proxy_headers=False)

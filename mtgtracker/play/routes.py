@@ -1,5 +1,6 @@
-"""/play: pick a deck and AI opponents, start a game on the game server, rejoin or end it, and the games so
-far. /play/results is where the game server posts each match's result (its shared secret, no sign-in)."""
+"""/play: pick a deck and AI opponents, start a game on a game server (tables.py), rejoin or end it, and
+the games so far. /play/results is where a game server posts each match's result (its shared secret, no
+sign-in)."""
 
 from __future__ import annotations
 
@@ -11,9 +12,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from mtgtracker import db
-from mtgtracker.play import games
-from mtgtracker.play.forge import Busy, GameServer
-from mtgtracker.services import ServiceError
+from mtgtracker.play import games, tables
+from mtgtracker.play.forge import Busy
+from mtgtracker.services import ServiceError, UpstreamError
 from mtgtracker.web import queries
 from mtgtracker.web.auth import LOOPBACK
 from mtgtracker.web.deps import form_int, get_conn, me, redirect, render, require_own_deck
@@ -23,13 +24,17 @@ MAX_OPPONENTS = 3
 RESULTS_PATH = "/play/results"
 
 
-def _settle(conn: sqlite3.Connection, table: dict) -> None:
-    """Games the tracker thinks are running but the game server no longer is: take the result it kept, or
-    call them abandoned (a restart loses a running game)."""
+def _settle(conn: sqlite3.Connection, where: tables.OneServer | tables.Pods) -> None:
+    """Games the tracker thinks are running but no game server is: take the result it kept, or call them
+    abandoned (a server that stopped lost its game). A server that doesn't answer right now is left alone."""
     for g in games.playing(conn):
-        if table.get("state") == "playing" and table.get("matchId") == g["match_id"]:
+        try:
+            table = where.status(g["match_id"])
+        except UpstreamError:
             continue
-        result = table.get("result") or {}
+        if table and table.get("state") == "playing":
+            continue
+        result = (table or {}).get("result") or {}
         if result.get("matchId") == g["match_id"]:
             games.record_result(conn, result, commit=False)
         else:
@@ -54,33 +59,38 @@ def play_page(
     request: Request, notice: str = "", error: str = "", conn: sqlite3.Connection = Depends(get_conn)
 ):
     person = me(request)
-    server = GameServer.from_env()
+    where = tables.from_env()
     opponents: list[dict] = []
-    table = None
+    running: list[dict] = []
     problem = None
-    if server is None:
+    if where is None:
         problem = "No game server is set up for this tracker."
     else:
         try:
-            opponents = server.opponents()
-            table = server.status()
+            running = where.running()
+            _settle(conn, where)
+            conn.commit()
+            opponents = where.lobby().opponents()
         except ServiceError as exc:
             problem = str(exc)
-    running = table if table and table.get("state") == "playing" else None
-    mine = [g for g in games.playing(conn, person.id) if running and g["match_id"] == running.get("matchId")]
-    decks = queries.list_decks(conn, person.id)
+    ids = {t.get("matchId") for t in running}
+    mine = [g for g in games.playing(conn, person.id) if g["match_id"] in ids]
+    my_ids = {g["match_id"] for g in mine}
+    others = [dict(t, who=_who(t)) for t in running if t.get("matchId") not in my_ids]
+    capacity = where.capacity if where else 0
     return render(
         request,
         "play.html",
         active="play",
-        decks=decks,
+        decks=queries.list_decks(conn, person.id),
         opponents=opponents,
         problem=problem,
-        running=running,
-        running_who=_who(running),
-        mine=mine[0] if mine else None,
+        mine=mine,
+        others=others,
+        full=len(running) >= capacity,
+        capacity=capacity,
         can_end_any=person.is_admin,
-        table_link=server.table_link if server else None,
+        table_link=where.table_link if where else None,
         recent=games.recent(conn, person.id),
         notice=notice,
         error=error,
@@ -100,17 +110,17 @@ async def play_start(request: Request, conn: sqlite3.Connection = Depends(get_co
     deck = require_own_deck(conn, deck_id, person)
     if not deck["commander"]:
         return redirect("/play", error=f"{deck['name']} has no commander. Pick one on its deck page.")
-    server = GameServer.from_env()
-    if server is None:
+    where = tables.from_env()
+    if where is None:
         return redirect("/play", error="No game server is set up for this tracker")
     detail = queries.get_deck(conn, deck_id, viewer_id=person.id)
     decklist = queries.deck_exports(detail)["decklist"]
     try:
-        roster = {o["id"]: o for o in server.opponents()}
+        roster = {o["id"]: o for o in where.lobby().opponents()}
         unknown = [o for o in picked if o not in roster]
         if unknown:
             return redirect("/play", error=f"Unknown opponent {unknown[0]}")
-        _settle(conn, server.status())
+        _settle(conn, where)
         spec = {
             "format": "commander",
             "seats": [
@@ -128,11 +138,15 @@ async def play_start(request: Request, conn: sqlite3.Connection = Depends(get_co
         results_base = os.environ.get("PLAY_RESULTS_URL", "").strip()
         if results_base:
             spec["resultsUrl"] = results_base.rstrip("/") + RESULTS_PATH
-        started = server.start(spec)
+        started = where.start(spec)
     except Busy:
         conn.commit()
+        if where.capacity > 1:
+            return redirect(
+                "/play", error=f"All {where.capacity} tables are in use. Try again when a game ends."
+            )
         try:
-            who = _who(server.status())
+            who = ", ".join(_who(t) for t in where.running()) or "Someone"
         except ServiceError:
             who = "Someone"
         return redirect(
@@ -159,16 +173,16 @@ async def play_start(request: Request, conn: sqlite3.Connection = Depends(get_co
         ticket=ticket,
     )
     request.state.audit_notice = f"Started a game: {deck['name']} against {', '.join(names)}"
-    return RedirectResponse(server.table_link(started["matchId"], ticket), status_code=303)
+    return RedirectResponse(where.table_link(started["matchId"], ticket), status_code=303)
 
 
 @router.post("/play/end")
 async def play_end(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    """End a running game: your own, or anyone's for an admin (the table is shared, one game at a time)."""
+    """End a running game: your own, or anyone's for an admin."""
     person = me(request)
     form = await request.form()
-    server = GameServer.from_env()
-    if server is None:
+    where = tables.from_env()
+    if where is None:
         return redirect("/play", error="No game server is set up for this tracker")
     match_id = str(form.get("match_id", ""))
     game = conn.execute("SELECT host_id, status FROM play_games WHERE match_id = ?", (match_id,)).fetchone()
@@ -177,9 +191,10 @@ async def play_end(request: Request, conn: sqlite3.Connection = Depends(get_conn
     if game is None and not person.is_admin:
         raise HTTPException(status_code=403, detail="That isn't your game")
     try:
-        ended = server.end(match_id)
+        server = where.server_for(match_id)
+        ended = server is not None and server.end(match_id)
         if not ended:
-            _settle(conn, server.status())
+            _settle(conn, where)
             conn.commit()
     except ServiceError as exc:
         return redirect("/play", error=str(exc))
@@ -192,8 +207,7 @@ async def play_results(request: Request):
     """The game server's result for a match (forge-gui-web PROTOCOL.md "Results"), with the shared control
     secret. Outside the sign-in middleware: the game server is not a person. Without a secret configured,
     only a loopback caller (local development) is believed."""
-    server = GameServer.from_env()
-    secret = server.secret if server else None
+    secret = tables.control_secret()
     sent = request.headers.get("authorization", "").encode()
     if secret:
         if not hmac.compare_digest(sent, f"Bearer {secret}".encode()):
