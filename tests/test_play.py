@@ -282,7 +282,7 @@ def test_only_the_host_or_an_admin_ends_a_game(db_path, forge):
     other = TestClient(create_app(db_path, auth=AuthConfig(mode="dev")))
     other.cookies.set(DEV_COOKIE, str(friend.id))
     page = other.get("/play")
-    assert "Owner is playing right now" in page.text
+    assert "Owner is playing." in page.text
     assert "End their game" not in page.text
     assert other.post("/play/end", data={"match_id": "m1"}, follow_redirects=False).status_code == 403
     assert forge.match == "m1"
