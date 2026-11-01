@@ -30,6 +30,9 @@ spec:
     spec:
       # Room for the preStop pause plus in-flight requests.
       terminationGracePeriodSeconds: 30
+      # Play runs each game on its own Forge game server pod in namespace forge (mtgtracker/play/tables.py);
+      # forge-gui-web's deploy grants this account that there.
+      serviceAccountName: mtgtracker
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -54,12 +57,12 @@ spec:
             - configMapRef:
                 name: mtgtracker-auth
                 optional: true
-          # Play (mtgtracker/play): the Forge game server in namespace forge. Its control API is in-cluster
-          # only; the secret is the one forge-gui-web's `deploy/minikube.sh secret` writes to both namespaces.
-          # Without it the play page says no game server is set up.
+          # Play (mtgtracker/play): a Forge game server pod per game in namespace forge, made from the
+          # template forge-gui-web's deploy writes there. Their control API is in-cluster only; the secret
+          # is the one forge-gui-web's `deploy/minikube.sh secret` writes to both namespaces.
           env:
-            - name: FORGE_CONTROL_URL
-              value: http://forge-control.forge.svc.cluster.local
+            - name: FORGE_TABLES
+              value: kube
             - name: FORGE_TABLE_URL
               value: /play/table/
             - name: PLAY_RESULTS_URL

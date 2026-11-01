@@ -4,5 +4,6 @@ namespace: mtgtracker
 resources:
   - namespace.yaml
   - pvc.yaml
+  - serviceaccount.yaml
   - deployment.yaml
   - service.yaml

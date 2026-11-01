@@ -3,25 +3,31 @@
 {% block title %}Play{% endblock %}
 {% block content %}
 <h1>Play</h1>
-<p class="subtle">Goldfish a deck against AI commanders that each play one clear plan. The game server hosts one game at a time.</p>
+<p class="subtle">Goldfish a deck against AI commanders that each play one clear plan.</p>
 {% include "_flash.html" %}
 {% if problem %}<div class="flash err" role="alert">{{ problem }}</div>{% endif %}
 
-{% if running %}
+{% if mine or others %}
 <section class="play-running">
-  <h2>At the table</h2>
-  {% if mine %}
-    <p><strong>{{ mine.deck_name }}</strong> against {{ mine.opponents | map(attribute="name") | join(", ") }}, started {{ mine.started_at[:16] | replace("T", " ") }} UTC.</p>
+  <h2>At the tables</h2>
+  {% for g in mine %}
+  <div class="play-game">
+    <p><strong>{{ g.deck_name }}</strong> against {{ g.opponents | map(attribute="name") | join(", ") }}, started {{ g.started_at[:16] | replace("T", " ") }} UTC.</p>
     <div class="play-actions">
-      {% if mine.ticket and table_link %}<a class="btn primary" href="{{ table_link(mine.match_id, mine.ticket) }}">Back to the table</a>{% endif %}
-      <form method="post" action="/play/end"><input type="hidden" name="match_id" value="{{ mine.match_id }}"><button type="submit" class="btn">End this game</button></form>
+      {% if g.ticket and table_link %}<a class="btn primary" href="{{ table_link(g.match_id, g.ticket) }}">Back to the table</a>{% endif %}
+      <form method="post" action="/play/end"><input type="hidden" name="match_id" value="{{ g.match_id }}"><button type="submit" class="btn">End this game</button></form>
     </div>
-  {% else %}
-    <p>{{ running_who }} {{ "is" if "," not in running_who else "are" }} playing right now. You can start a game when it ends.</p>
+  </div>
+  {% endfor %}
+  {% for t in others %}
+  <div class="play-game">
+    <p>{{ t.who }} {{ "is" if "," not in t.who else "are" }} playing.</p>
     {% if can_end_any %}
-    <form method="post" action="/play/end"><input type="hidden" name="match_id" value="{{ running.matchId }}"><button type="submit" class="btn">End their game</button></form>
+    <form method="post" action="/play/end"><input type="hidden" name="match_id" value="{{ t.matchId }}"><button type="submit" class="btn">End their game</button></form>
     {% endif %}
-  {% endif %}
+  </div>
+  {% endfor %}
+  {% if full %}<p class="subtle">{% if capacity == 1 %}The game server hosts one game at a time. You can start one when this one ends.{% else %}All {{ capacity }} tables are in use. You can start a game when one ends.{% endif %}</p>{% endif %}
 </section>
 {% endif %}
 
@@ -61,7 +67,7 @@
   {% endif %}
 
   <div class="play-start">
-    <button type="submit" class="primary"{% if problem or not decks or running %} disabled{% endif %}>Start game</button>
+    <button type="submit" class="primary"{% if problem or not decks or full %} disabled{% endif %}>Start game</button>
     <span class="subtle">The whole list plays, including cards you still have to buy.</span>
   </div>
 </form>
