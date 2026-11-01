@@ -78,12 +78,16 @@ def install(app: FastAPI) -> None:
     async def identify(request: Request, call_next):
         """Who's asking (web/auth.py): request.state.user is the principal,
         request.state.actor who really asks. Static files, the kubelet's
-        /healthz probe and the game server's /play/results and /play/replays/ need no identity. After the
-        response, a successful write is audited."""
+        /healthz probe, the game server's /play/results and /play/replays/, and the Discord Activity
+        (/discord, which signs people in through Discord itself) need no identity. After the response, a
+        successful write is audited."""
         # /play/results and /play/replays/ are the game server posting results and replays with its
         # shared secret (mtgtracker/play).
         path = request.url.path
-        if not (path.startswith(("/static/", "/play/replays/")) or path in ("/healthz", "/play/results")):
+        if not (
+            path.startswith(("/static/", "/play/replays/", "/discord/"))
+            or path in ("/healthz", "/play/results", "/discord")
+        ):
             state = request.app.state
             conn = db.connect(state.db_path, check_same_thread=False)
             try:
@@ -120,7 +124,11 @@ def install(app: FastAPI) -> None:
 
     @app.middleware("http")
     async def reject_cross_origin_writes(request: Request, call_next):
-        if request.method not in ("GET", "HEAD", "OPTIONS"):
+        # The Discord Activity's API is called from Discord's proxy origin (<app>.discordsays.com). It never
+        # relies on cookies: sign-in takes a code from Discord, and every other call a bearer session token
+        # that a browser doesn't send on its own, so a forged cross-site request has nothing to ride on.
+        discord_api = request.url.path.startswith("/discord/api/")
+        if request.method not in ("GET", "HEAD", "OPTIONS") and not discord_api:
             origin = request.headers.get("origin")
             cross_site = request.headers.get("sec-fetch-site") == "cross-site"
             if cross_site or (origin and urlsplit(origin).netloc != request.headers.get("host")):
