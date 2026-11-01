@@ -29,7 +29,7 @@ class FakeDiscord:
         self.exchanges = []
 
     def add(self, user_id, name, *, member=True):
-        self.users[user_id] = {"id": user_id, "username": name.lower(), "global_name": name}
+        self.users[user_id] = {"id": user_id, "username": name.lower(), "global_name": name, "avatar": None}
         if member:
             self.members.add(user_id)
         code = f"code-{user_id}"
@@ -117,6 +117,7 @@ def test_a_member_signs_in_by_their_discord_id(client, discord):
     body = res.json()
     assert body["accessToken"] == "tok-111"
     assert (body["id"], body["name"]) == ("111", "Matt")
+    assert body["avatar"].startswith("https://cdn.discordapp.com/embed/avatars/")
 
 
 def test_everyone_in_an_activity_shares_one_room(client, discord, db_path):
@@ -156,6 +157,8 @@ def test_starting_seats_everyone_with_a_deck(client, discord, db_path):
     assert [(s["kind"], s.get("name"), s.get("person")) for s in spec["seats"]] == [
         ("human", "Matt", "discord:111"), ("human", "Alex", "discord:222"), ("ai", None, None)
     ]
+    # No picture of their own: Discord's default one for their id, on Discord's CDN.
+    assert spec["seats"][0]["avatar"] == f"https://cdn.discordapp.com/embed/avatars/{(111 >> 22) % 6}.png"
     assert _room(client, matt).json()["started"] == {"matchId": "m1", "ticket": "t10" * 4}
     assert _room(client, sam).json()["started"] == {"matchId": "m1", "ticket": None}
     conn = db.connect(db_path)

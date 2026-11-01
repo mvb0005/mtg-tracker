@@ -108,11 +108,13 @@ MAX_SEATS = 4
 @dataclass(frozen=True)
 class Seat:
     """A human seat: who sits there (a tracker person id, or another id the game server only echoes back),
-    their name at the table, and the deck they play (a tracker deck with a commander)."""
+    their name at the table, the deck they play (a tracker deck with a commander) and, from Discord, their
+    picture."""
 
     name: str
     person: str
     deck_id: int
+    avatar: str | None = None
 
 
 def start_table(
@@ -149,7 +151,8 @@ def start_table(
             "format": "commander",
             "seats": [
                 {"kind": "human", "name": seat.name, "person": seat.person,
-                 "deck": {"name": deck["name"], "list": decklist}}
+                 "deck": {"name": deck["name"], "list": decklist},
+                 **({"avatar": seat.avatar} if seat.avatar else {})}
                 for seat, (deck, decklist) in zip(seats, decks, strict=True)
             ]
             + [{"kind": "ai", "opponent": o} for o in picked],
