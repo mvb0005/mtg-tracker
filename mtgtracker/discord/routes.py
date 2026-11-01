@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from mtgtracker import db
 from mtgtracker.discord import auth, rooms
@@ -226,3 +226,22 @@ def _start(conn: sqlite3.Connection, room: rooms.Room, seated: list[rooms.Member
         room.starting = False
         room.started = started
         room.error = error
+
+
+@router.post("/discord/api/trace")
+async def trace(request: Request):
+    """Where the table page's Discord voice setup got to (it runs in Discord's iframe, whose console nobody
+    sees): one short line in the log per step. Rate limited, and nothing is kept."""
+    if not TRACES.allow():
+        return Response(status_code=429)
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    step = str(body.get("step", ""))[:60] if isinstance(body, dict) else ""
+    detail = str(body.get("detail", ""))[:200] if isinstance(body, dict) else ""
+    print(f"discord voice: {step} {detail}".rstrip(), flush=True)
+    return Response(status_code=204)
+
+
+TRACES = auth.Limiter(limit=120)
