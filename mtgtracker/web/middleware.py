@@ -114,7 +114,7 @@ def install(app: FastAPI) -> None:
     @app.middleware("http")
     async def static_cache_headers(request: Request, call_next):
         response = await call_next(request)
-        if request.url.path.startswith("/static/"):
+        if request.url.path.startswith(("/static/", "/discord/static/")):
             # Versioned URLs (?v=<content hash>) never change; anything else
             # must be revalidated so a stale stylesheet can't stick around.
             response.headers["Cache-Control"] = (

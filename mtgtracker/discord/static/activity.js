@@ -3,7 +3,7 @@
 // anyone can start: the game seats everyone with a deck plus the AIs, and each page goes to its own seat.
 // Inside Discord every request goes through Discord's proxy: the tracker's API under /.proxy/ (the root URL
 // mapping is the tracker's /discord/) and the table under /.proxy/table/ (mapped to /play/table/).
-import { DiscordSDK } from './discord-sdk.js';
+import { DiscordSDK } from './discord-sdk.js?v=2.5.0'; // the vendored SDK's version: change it with the file
 
 const clientId = document.body.dataset.clientId;
 const inDiscord = (() => {

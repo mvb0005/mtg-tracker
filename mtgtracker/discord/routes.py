@@ -8,9 +8,11 @@ token from POST /discord/api/session. Players are their Discord ids; they pick f
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import time
 from collections.abc import Iterator
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -24,6 +26,7 @@ from mtgtracker.web import queries
 from mtgtracker.web.deps import render
 
 router = APIRouter()
+STATIC = Path(__file__).parent / "static"
 ROSTER_SECONDS = 60.0
 _roster: tuple[float, list[dict]] = (0.0, [])
 
@@ -41,7 +44,17 @@ def activity_root() -> RedirectResponse:
 def activity(request: Request):
     """The Activity's page. Static: everything it shows comes from the API once Discord has signed you in."""
     discord = auth.Discord.from_env()
-    return render(request, "activity.html", client_id=discord.client_id if discord else "")
+    page = render(
+        request, "activity.html", client_id=discord.client_id if discord else "",
+        version={name: _version(name) for name in ("activity.js", "activity.css")},
+    )
+    page.headers["Cache-Control"] = "no-cache"  # so a new deploy's files reach an Activity opened before
+    return page
+
+
+def _version(name: str) -> str:
+    """Short content hash of an Activity file, appended as ?v= (as the tracker's static_version does)."""
+    return hashlib.sha256((STATIC / name).read_bytes()).hexdigest()[:12]
 
 
 @router.post("/discord/api/session")
