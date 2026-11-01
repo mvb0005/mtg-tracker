@@ -77,7 +77,8 @@ async def session(request: Request):
         return _error(403, "not_member", str(exc))
     except ServiceError as exc:
         return _error(401, "sign_in", str(exc))
-    return {"session": discord.session(who["id"], who["name"]), "accessToken": token, **who}
+    session = discord.session(who["id"], who["name"], avatar=who["avatar"])
+    return {"session": session, "accessToken": token, **who}
 
 
 class _Refused(Exception):
@@ -141,7 +142,7 @@ def _view(room: rooms.Room, you: str, decks: list[dict], roster: list[dict], pro
     return {
         "you": you,
         "members": [
-            {"id": m.id, "name": m.name, "deck": by_id.get(m.deck_id)}
+            {"id": m.id, "name": m.name, "avatar": m.avatar, "deck": by_id.get(m.deck_id)}
             for m in sorted(room.members.values(), key=lambda m: m.joined)
         ],
         "opponents": room.opponents,
@@ -175,7 +176,7 @@ async def room(request: Request, conn: sqlite3.Connection = Depends(signed_in)):
     except ServiceError as exc:
         roster, problem = [], str(exc)
     with rooms.LOCK:
-        room = rooms.touch(body["instanceId"], me["d"], me["n"])
+        room = rooms.touch(body["instanceId"], me["d"], me["n"], me.get("a"))
         if room.started and _over(conn, room.started["matchId"]):
             room.started = None
         if "deckId" in body and any(d["id"] == body["deckId"] for d in decks):
@@ -213,7 +214,7 @@ def _start(conn: sqlite3.Connection, room: rooms.Room, seated: list[rooms.Member
             raise ServiceError("This tracker has no owner to play decks from")
         if not seated:
             raise ServiceError("Pick a deck first")
-        seats = [play.Seat(m.name, f"discord:{m.id}", m.deck_id) for m in seated]
+        seats = [play.Seat(m.name, f"discord:{m.id}", m.deck_id, m.avatar) for m in seated]
         answer, tickets = play.start_table(conn, owner, seats, picked, return_url="/")
         started = {
             "matchId": answer["matchId"],

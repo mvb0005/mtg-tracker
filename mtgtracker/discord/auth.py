@@ -30,7 +30,8 @@ from mtgtracker import users
 from mtgtracker.services import ServiceError, UpstreamError
 
 API = "https://discord.com/api/v10"
-SCOPES = ("identify", "guilds.members.read")
+SCOPES = ("identify", "guilds.members.read", "rpc.voice.read")  # voice: the table shows who is talking
+CDN = "https://cdn.discordapp.com"
 SESSION_SECONDS = 12 * 3600
 MAX_CODE = 512
 # For everyone together: every request arrives through Discord's proxy and the tunnel.
@@ -81,7 +82,8 @@ class Discord:
         return token
 
     def user(self, token: str) -> dict:
-        """{id, name} of the token's Discord user, if they are in the guild."""
+        """{id, name, avatar} of the token's Discord user (avatar: their picture's URL), if they are in the
+        guild."""
         auth = {"Authorization": f"Bearer {token}"}
         res = self._call("GET", "/users/@me", headers=auth)
         if res.status_code != 200:
@@ -94,19 +96,21 @@ class Discord:
             raise NotMember("This game is for members of Matt's Discord server")
         nick = member.json().get("nick")
         name = nick or me.get("global_name") or me.get("username") or "Discord user"
-        return {"id": str(me["id"]), "name": name}
+        return {"id": str(me["id"]), "name": name, "avatar": avatar_url(str(me["id"]), me.get("avatar"))}
 
     def _key(self) -> bytes:
         # Stable across pods and restarts, and changes when the client secret does.
         return hashlib.sha256(b"mtgtracker discord session\0" + self.client_secret.encode()).digest()
 
-    def session(self, discord_id: str, name: str, now: float | None = None) -> str:
-        body = {"d": discord_id, "n": name, "exp": int((now or time.time()) + SESSION_SECONDS)}
+    def session(
+        self, discord_id: str, name: str, now: float | None = None, avatar: str | None = None
+    ) -> str:
+        body = {"d": discord_id, "n": name, "a": avatar, "exp": int((now or time.time()) + SESSION_SECONDS)}
         payload = _b64(json.dumps(body, separators=(",", ":")).encode())
         return payload + "." + _b64(hmac.new(self._key(), payload.encode(), hashlib.sha256).digest())
 
     def read_session(self, token: str, now: float | None = None) -> dict | None:
-        """{d: discord id, n: name} of a valid session token, else None."""
+        """{d: discord id, n: name, a: avatar URL} of a valid session token, else None."""
         payload, _, sig = (token or "").partition(".")
         good = _b64(hmac.new(self._key(), payload.encode(), hashlib.sha256).digest())
         if not payload or not hmac.compare_digest(sig, good):
@@ -116,6 +120,13 @@ class Discord:
         except (ValueError, json.JSONDecodeError):
             return None
         return body if body.get("exp", 0) > (now or time.time()) else None
+
+
+def avatar_url(user_id: str, avatar: str | None) -> str:
+    """A Discord user's picture on Discord's CDN: theirs, or the default Discord gives them."""
+    if avatar:
+        return f"{CDN}/avatars/{user_id}/{avatar}.png?size=128"
+    return f"{CDN}/embed/avatars/{(int(user_id) >> 22) % 6}.png"
 
 
 def _b64(data: bytes) -> str:

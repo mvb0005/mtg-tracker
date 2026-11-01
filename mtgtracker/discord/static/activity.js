@@ -14,8 +14,16 @@ const inDiscord = (() => {
   }
 })();
 const api = (path) => (inDiscord ? `/.proxy/api/${path}` : `api/${path}`);
-const tableUrl = (id, ticket) =>
-  `${inDiscord ? '/.proxy/table/' : '../play/table/'}${id}/?ticket=${encodeURIComponent(ticket)}`;
+// Discord's launch query (frame_id, instance_id, ...) goes along to the table, with the application's id: the
+// table page starts the SDK too, to show who is talking.
+const launch = new URLSearchParams(location.search);
+const tableUrl = (id, ticket) => {
+  const q = new URLSearchParams(launch);
+  q.set('ticket', ticket);
+  if (inDiscord) q.set('app', clientId);
+  return `${inDiscord ? '/.proxy/table/' : '../play/table/'}${id}/?${q}`;
+};
+const face = (url) => (url && inDiscord ? url.replace('https://cdn.discordapp.com/', '/.proxy/cdn/') : url);
 const POLL_MS = 1500;
 
 const app = document.getElementById('app');
@@ -73,7 +81,7 @@ async function signIn() {
     response_type: 'code',
     state: '',
     prompt: 'none',
-    scope: ['identify', 'guilds.members.read'],
+    scope: ['identify', 'guilds.members.read', 'rpc.voice.read'],
   });
   const { status, data } = await call('session', { code });
   if (status !== 200) throw new Error(data.error?.message || `Sign-in failed (${status})`);
@@ -108,6 +116,7 @@ function render() {
 
   const players = el('ul', { class: 'choices' }, r.members.map((m) =>
     el('li', {}, el('div', { class: 'player' },
+      m.avatar ? el('img', { class: 'face', src: face(m.avatar), alt: '' }) : el('span', { class: 'face' }),
       el('span', { class: 'name' }, m.id === r.you ? `${m.name} (you)` : m.name),
       el('span', { class: 'meta' }, m.deck ? `${m.deck.commander} · ${m.deck.name}` : 'Picking a deck…')))));
 
