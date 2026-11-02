@@ -50,9 +50,22 @@ def activity(request: Request):
     page = render(
         request, "activity.html", client_id=discord.client_id if discord else "",
         version={name: _version(name) for name in ("activity.js", "activity.css")},
+        # Inside Discord the footer's links open in the browser, which needs this site's own address.
+        legal=f"https://{request.headers.get('host', '')}/discord/",
     )
     page.headers["Cache-Control"] = "no-cache"  # so a new deploy's files reach an Activity opened before
     return page
+
+
+@router.get("/discord/terms", response_class=HTMLResponse)
+def terms(request: Request):
+    """The Terms of Service, here so they're public: the application's settings in Discord link to them."""
+    return render(request, "terms.html", version={"activity.css": _version("activity.css")})
+
+
+@router.get("/discord/privacy", response_class=HTMLResponse)
+def privacy(request: Request):
+    return render(request, "privacy.html", version={"activity.css": _version("activity.css")})
 
 
 def _version(name: str) -> str:
@@ -76,11 +89,11 @@ async def session(request: Request):
     try:
         token = discord.exchange(str(code or ""))
         who = discord.user(token)
-    except auth.NotMember as exc:
-        return _error(403, "not_member", str(exc))
     except ServiceError as exc:
         return _error(401, "sign_in", str(exc))
-    session = discord.session(who["id"], who["name"], avatar=who["avatar"])
+    session = discord.session(
+        who["id"], who["name"], avatar=who["avatar"], guest=bool(who.get("guest"))
+    )
     return {"session": session, "accessToken": token, **who}
 
 
@@ -230,6 +243,7 @@ def _view(
     live: list[dict],
     in_game: set[str],
     problem: str | None,
+    guest: bool = False,
 ) -> dict:
     by_id: dict[int | str, dict] = {d["id"]: d for d in decks}
     for o in roster:
@@ -250,7 +264,13 @@ def _view(
     return {
         "you": you,
         "members": [
-            {"id": m.id, "name": m.name, "avatar": m.avatar, "deck": by_id.get(m.deck_id)}
+            {
+                "id": m.id,
+                "name": m.name,
+                "avatar": m.avatar,
+                "guest": m.guest,
+                "deck": by_id.get(m.deck_id),
+            }
             for m in sorted(room.members.values(), key=lambda m: m.joined)
             if not m.in_game and (m.in_game is False and (m.id not in in_game or m.left_table))
         ],
@@ -265,6 +285,7 @@ def _view(
         ),
         "error": room.error,
         "problem": problem,
+        "guest": guest,
     }
 
 
@@ -280,6 +301,7 @@ async def room(request: Request, conn: sqlite3.Connection = Depends(signed_in)):
     if not isinstance(body, dict) or not rooms.valid_instance(str(body.get("instanceId", ""))):
         return _error(400, "bad_request", "No Activity instance")
     me = request.state.session
+    guest = bool(me.get("g"))
     imported_id = None
     import_err = None
     if isinstance(body.get("importUrl"), str) and body["importUrl"].strip():
@@ -294,7 +316,7 @@ async def room(request: Request, conn: sqlite3.Connection = Depends(signed_in)):
     except ServiceError as exc:
         roster, problem = [], str(exc)
     with rooms.LOCK:
-        room = rooms.touch(body["instanceId"], me["d"], me["n"], me.get("a"))
+        room = rooms.touch(body["instanceId"], me["d"], me["n"], me.get("a"), guest=guest)
         if room.started and _over(conn, room.started["matchId"]):
             room.started = None
         if import_err is not None:
@@ -327,7 +349,7 @@ async def room(request: Request, conn: sqlite3.Connection = Depends(signed_in)):
         _start(conn, room, seated, picked)
     live, in_game = _live(me["d"], me.get("n", ""))
     with rooms.LOCK:
-        return _view(room, me["d"], decks, roster, live, in_game, problem)
+        return _view(room, me["d"], decks, roster, live, in_game, problem, guest=guest)
 
 
 def _over(conn: sqlite3.Connection, match_id: str) -> bool:

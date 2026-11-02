@@ -104,6 +104,8 @@ def test_the_activity_page_loads_its_own_files(client, discord):
     assert 'href="static/activity.css?v=' in page.text
     assert 'src="static/activity.js?v=' in page.text
     assert page.headers["cache-control"] == "no-cache"
+    assert '<a href="terms">' in page.text and '<a href="privacy">' in page.text
+    assert 'data-legal="https://testserver/discord/"' in page.text
     assert client.get("/discord", follow_redirects=False).headers["location"] == "/discord/"
     script = client.get("/discord/static/activity.js?v=x")
     assert script.status_code == 200
@@ -112,6 +114,13 @@ def test_the_activity_page_loads_its_own_files(client, discord):
     sdk = client.get("/discord/static/discord-sdk.js")
     assert sdk.status_code == 200
     assert "DiscordSDK" in sdk.text
+
+
+def test_the_activity_asks_for_voice_on_the_first_sign_in(client, discord):
+    """A second authenticate is "Already authenticated" and speaking never starts."""
+    js = client.get("/discord/static/activity.js").text
+    assert "rpc.voice.read" in js
+    assert js.count("commands.authenticate") == 1
 
 
 def test_a_member_signs_in_by_their_discord_id(client, discord):
@@ -232,15 +241,28 @@ def test_a_room_forgets_people_who_left(client, discord, monkeypatch):
     assert [m["name"] for m in _room(client, matt).json()["members"]] == ["Matt"]
 
 
-def test_sign_in_is_refused_without_a_good_code_or_membership(client, discord):
+def test_sign_in_is_refused_without_a_good_code(client, discord):
     assert _sign_in(client, "made-up").status_code == 401
     assert _sign_in(client, "").status_code == 401
-    res = _sign_in(client, discord.add("222", "Stranger", member=False))
-    assert res.status_code == 403
-    assert res.json()["error"]["code"] == "not_member"
     code = discord.add("333", "Twice")
     assert _sign_in(client, code).status_code == 200
     assert _sign_in(client, code).status_code == 401, "Discord takes a code once"
+
+
+def test_a_guest_signs_in_and_picks_from_the_owners_decks(client, discord, db_path):
+    res = _sign_in(client, discord.add("222", "Sam", member=False))
+    assert res.status_code == 200
+    body = res.json()
+    assert body["guest"] is True
+    assert (body["id"], body["name"]) == ("222", "Sam")
+    sam = body["session"]
+    view = _room(client, sam).json()
+    assert view["guest"] is True
+    assert view["members"][0]["guest"] is True
+    assert any(d["name"] == "Reign of Dragons" for d in view["decks"])
+    owner_deck = _deck(db_path)["id"]
+    picked = _room(client, sam, deckId=owner_deck).json()
+    assert picked["members"][0]["deck"]["name"] == "Reign of Dragons"
 
 
 def test_the_api_needs_a_session(client, discord):
@@ -273,6 +295,11 @@ def test_only_discord_paths_skip_access(db_path, discord, signer):  # noqa: F811
     client = _cf_client(db_path, signer)
     assert client.get("/discord/").status_code == 200
     assert client.get("/discord/static/activity.js").status_code == 200
+    for page in ("/discord/terms", "/discord/privacy"):
+        res = client.get(page)
+        assert res.status_code == 200, page
+        assert "mtg.support@mattbonsall.com" in res.text
+        assert 'href="static/activity.css?v=' in res.text
     assert client.post("/discord/api/room", json={"instanceId": INSTANCE}).status_code == 401
     session = _session(client, discord, "111", "Matt")
     assert _room(client, session).status_code == 200
