@@ -3,15 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Matt's the Gathering</title>
+  <title>Matt's Forge</title>
   {# Relative URLs only: inside Discord this page is the Activity's root, served from the tracker's /discord/. #}
   <link rel="stylesheet" href="static/activity.css?v={{ version['activity.css'] }}">
 </head>
-<body data-client-id="{{ client_id }}">
+<body data-client-id="{{ client_id }}" data-legal="{{ legal }}">
   <main id="app">
-    <h1>Matt's the Gathering</h1>
+    <h1>Matt's Forge</h1>
     <p class="status" id="status">Signing in through Discord…</p>
   </main>
+  <footer class="legal-links"><a href="terms">Terms of Service</a> · <a href="privacy">Privacy Policy</a></footer>
   <script type="module" src="static/activity.js?v={{ version['activity.js'] }}"></script>
 </body>
 </html>
