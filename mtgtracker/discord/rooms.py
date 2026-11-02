@@ -23,6 +23,7 @@ class Member:
     name: str
     joined: float
     avatar: str | None = None
+    guest: bool = False
     deck_id: int | str | None = None
     in_game: bool = False
     left_table: bool = False
@@ -48,7 +49,12 @@ def valid_instance(instance: str) -> bool:
 
 
 def touch(
-    instance: str, discord_id: str, name: str, avatar: str | None = None, now: float | None = None
+    instance: str,
+    discord_id: str,
+    name: str,
+    avatar: str | None = None,
+    now: float | None = None,
+    guest: bool = False,
 ) -> Room:
     """The room, with this person marked present; people gone quiet for STALE seconds have left. Call with
     LOCK held."""
@@ -57,7 +63,7 @@ def touch(
     member = room.members.get(discord_id)
     if member is None:
         member = room.members[discord_id] = Member(discord_id, name, now)
-    member.name, member.avatar, member.seen = name, avatar, now
+    member.name, member.avatar, member.guest, member.seen = name, avatar, guest, now
     for gone in [m for m in room.members.values() if now - m.seen > STALE]:
         del room.members[gone.id]
     for empty in [k for k, r in _ROOMS.items() if not r.members and not r.starting]:

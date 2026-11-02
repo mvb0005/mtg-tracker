@@ -1,10 +1,13 @@
 """Signing in through Discord for the Activity.
 
-The Activity asks Discord to authorize this application (scopes `identify` and `guilds.members.read`) and
+The Activity asks Discord to authorize this application (scopes `identify`, `guilds.members.read`, and
+`rpc.voice.read` so the table can show who is talking) and
 sends the code here. The code is exchanged with the application's secret, so a request that didn't come
-through Discord has nothing to exchange; the user is whoever Discord says the token belongs to, and must be a
-member of DISCORD_GUILD_ID. The page then gets a session token (signed, short-lived, sent as a bearer header:
-cookies are unreliable in Discord's iframe) and Discord's access token for the SDK's `authenticate`.
+through Discord has nothing to exchange; the user is whoever Discord says the token belongs to. Members of
+DISCORD_GUILD_ID keep their nick; everyone else is a guest (a Discord voice-channel guest, a friend of a
+friend) and still picks from the same decks. The page then gets a session token (signed, short-lived, sent as
+a bearer header: cookies are unreliable in Discord's iframe) and Discord's access token for the SDK's
+`authenticate`.
 
 Players are known by their Discord id (D-D2, Matt): no tracker account needed. For now everyone plays from the
 tracker owner's decks, and games are recorded under the owner.
@@ -30,17 +33,13 @@ from mtgtracker import users
 from mtgtracker.services import ServiceError, UpstreamError
 
 API = "https://discord.com/api/v10"
-SCOPES = ("identify", "guilds.members.read")  # the table also asks for rpc.voice.read, to show who is talking
+SCOPES = ("identify", "guilds.members.read")  # the Activity also asks Discord for rpc.voice.read at sign-in
 CDN = "https://cdn.discordapp.com"
 SESSION_SECONDS = 12 * 3600
 MAX_CODE = 512
 # For everyone together: every request arrives through Discord's proxy and the tunnel.
 EXCHANGES_PER_MINUTE = 30
 TIMEOUT = 10.0
-
-
-class NotMember(ServiceError):
-    """Signed in to Discord, but not in the tracker's Discord server."""
 
 
 @dataclass(frozen=True)
@@ -82,35 +81,49 @@ class Discord:
         return token
 
     def user(self, token: str) -> dict:
-        """{id, name, avatar} of the token's Discord user (avatar: their picture's URL), if they are in the
-        guild."""
+        """{id, name, avatar, guest} of the token's Discord user. guest is true when they are not in the
+        guild (a voice-channel guest); they still play from the same decks."""
         auth = {"Authorization": f"Bearer {token}"}
         res = self._call("GET", "/users/@me", headers=auth)
         if res.status_code != 200:
             raise ServiceError("Discord didn't say who you are")
         me = res.json()
         member = self._call("GET", f"/users/@me/guilds/{self.guild_id}/member", headers=auth)
-        if member.status_code != 200:
+        guest = member.status_code != 200
+        if guest:
             answer = f"HTTP {member.status_code} {member.text[:200]}"
-            print(f"discord: membership check for {me.get('id')}: {answer}", flush=True)
-            raise NotMember("This game is for members of Matt's Discord server")
-        nick = member.json().get("nick")
+            print(f"discord: guest {me.get('id')}: {answer}", flush=True)
+            nick = None
+        else:
+            nick = member.json().get("nick")
         name = nick or me.get("global_name") or me.get("username") or "Discord user"
-        return {"id": str(me["id"]), "name": name, "avatar": avatar_url(str(me["id"]), me.get("avatar"))}
+        return {
+            "id": str(me["id"]),
+            "name": name,
+            "avatar": avatar_url(str(me["id"]), me.get("avatar")),
+            "guest": guest,
+        }
 
     def _key(self) -> bytes:
         # Stable across pods and restarts, and changes when the client secret does.
         return hashlib.sha256(b"mtgtracker discord session\0" + self.client_secret.encode()).digest()
 
     def session(
-        self, discord_id: str, name: str, now: float | None = None, avatar: str | None = None
+        self,
+        discord_id: str,
+        name: str,
+        now: float | None = None,
+        avatar: str | None = None,
+        guest: bool = False,
     ) -> str:
         body = {"d": discord_id, "n": name, "a": avatar, "exp": int((now or time.time()) + SESSION_SECONDS)}
+        if guest:
+            body["g"] = True
         payload = _b64(json.dumps(body, separators=(",", ":")).encode())
         return payload + "." + _b64(hmac.new(self._key(), payload.encode(), hashlib.sha256).digest())
 
     def read_session(self, token: str, now: float | None = None) -> dict | None:
-        """{d: discord id, n: name, a: avatar URL} of a valid session token, else None."""
+        """{d: discord id, n: name, a: avatar URL, optional g: guest} of a valid session token, else None."""
         payload, _, sig = (token or "").partition(".")
         good = _b64(hmac.new(self._key(), payload.encode(), hashlib.sha256).digest())
         if not payload or not hmac.compare_digest(sig, good):

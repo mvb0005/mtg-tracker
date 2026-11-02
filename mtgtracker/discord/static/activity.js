@@ -72,27 +72,32 @@ function trace(step, detail = '') {
   fetch(api('trace'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ step, detail }) }).catch(() => {});
 }
 
-/** Who is talking, for the table's faces: needs the voice scope, which Discord asks the player for once. */
+const LOBBY_SCOPES = ['identify', 'guilds.members.read'];
+const VOICE_SCOPES = [...LOBBY_SCOPES, 'rpc.voice.read'];
+const GUEST_SCOPES = ['identify', 'rpc.voice.read'];
+const GUEST_LOBBY = ['identify'];
+
+function authorize(scopes, prompt) {
+  const args = { client_id: clientId, response_type: 'code', state: '', scope: scopes };
+  if (prompt) args.prompt = prompt;
+  return sdk.commands.authorize(args);
+}
+
+/** Who is talking, for the table's faces. The SDK is already authenticated from sign-in; a second
+ *  authenticate is "Already authenticated" and speaking never starts. */
 async function listenForVoice() {
   try {
-    const { code } = await sdk.commands.authorize({
-      client_id: clientId,
-      response_type: 'code',
-      state: '',
-      scope: ['identify', 'guilds.members.read', 'rpc.voice.read'],
-    });
-    const { status, data } = await call('session', { code });
-    if (status !== 200) return trace('voice session refused', String(status));
-    session = data.session;
-    await sdk.commands.authenticate({ access_token: data.accessToken });
-    if (!sdk.channelId) return trace('voice: no channel');
+    if (!sdk?.channelId) return trace('voice: no channel');
+    const uid = (e) => String(e?.user_id ?? e?.userId ?? '');
     const on = (id, talking) => {
+      if (!id) return;
       if (talking) speaking.add(id);
       else speaking.delete(id);
       tellTable();
+      if (room) render();
     };
-    await sdk.subscribe(Events.SPEAKING_START, (e) => on(e.user_id, true), { channel_id: sdk.channelId });
-    await sdk.subscribe(Events.SPEAKING_STOP, (e) => on(e.user_id, false), { channel_id: sdk.channelId });
+    await sdk.subscribe(Events.SPEAKING_START, (e) => on(uid(e), true), { channel_id: sdk.channelId });
+    await sdk.subscribe(Events.SPEAKING_STOP, (e) => on(uid(e), false), { channel_id: sdk.channelId });
     trace('voice listening', `channel ${sdk.channelId}`);
   } catch (e) {
     trace('voice failed', e?.message || JSON.stringify(e));
@@ -116,7 +121,7 @@ function show(...children) {
   const focused = document.activeElement?.classList?.contains('import-input');
   const start = focused ? document.activeElement.selectionStart : null;
   const end = focused ? document.activeElement.selectionEnd : null;
-  app.replaceChildren(el('h1', {}, "Matt's the Gathering"), ...children.flat(Infinity).filter((c) => c != null && c !== false));
+  app.replaceChildren(el('h1', {}, "Matt's Forge"), ...children.flat(Infinity).filter((c) => c != null && c !== false));
   if (focused) {
     const inp = app.querySelector('.import-input');
     if (inp) {
@@ -159,14 +164,28 @@ async function signIn() {
       tellTable();
     }).catch(() => {});
   }
-  // Only what the lobby needs; the table asks for voice (who is talking) itself, and may show Discord's prompt.
-  const { code } = await within(15000, sdk.commands.authorize({
-    client_id: clientId,
-    response_type: 'code',
-    state: '',
-    prompt: 'none',
-    scope: ['identify', 'guilds.members.read'],
-  }), 'Discord sign-in');
+  // Voice has to be on this first authorize: the SDK only authenticates once. prompt none if they already
+  // granted it; otherwise Discord's consent. Guests (not in the server) often can't grant guilds.members.read,
+  // so identify + voice, then identify alone, still get them in.
+  let code;
+  const tries = [
+    () => within(15000, authorize(VOICE_SCOPES, 'none'), 'Discord sign-in'),
+    () => authorize(VOICE_SCOPES),
+    () => within(15000, authorize(LOBBY_SCOPES, 'none'), 'Discord sign-in'),
+    () => authorize(GUEST_SCOPES),
+    () => authorize(GUEST_LOBBY),
+  ];
+  let last;
+  for (const step of tries) {
+    try {
+      ({ code } = await step());
+      last = null;
+      break;
+    } catch (e) {
+      last = e;
+    }
+  }
+  if (!code) throw last || new Error("Discord didn't sign you in.");
   const { status, data } = await call('session', { code });
   if (status !== 200) throw new Error(data.error?.message || `Sign-in failed (${status})`);
   session = data.session;
@@ -229,9 +248,11 @@ function render() {
   const players = el('ul', { class: 'choices' },
     r.members.map((m) =>
       el('li', {}, el('div', { class: 'player' },
-        m.avatar ? el('img', { class: 'face', src: face(m.avatar), alt: '' }) : el('span', { class: 'face' }),
+        m.avatar
+          ? el('img', { class: speaking.has(m.id) ? 'face talking' : 'face', src: face(m.avatar), alt: '' })
+          : el('span', { class: speaking.has(m.id) ? 'face talking' : 'face' }),
         el('div', { class: 'player-text' },
-          el('span', { class: 'name' }, m.id === r.you ? `${m.name} (you)` : m.name),
+          el('span', { class: 'name' }, m.id === r.you ? `${m.name} (you)` : m.guest ? `${m.name} (guest)` : m.name),
           el('span', { class: 'meta' }, m.deck ? `Commander: ${m.deck.commander} · ${m.deck.name}` : 'Picking a deck…')),
         m.deck?.commander ? el('img', {
           class: 'cmd-mini',
@@ -399,8 +420,16 @@ function render() {
   );
 }
 
+// Following a link inside Discord's frame would leave the Activity: Discord opens it in the browser instead.
+document.querySelector('.legal-links')?.addEventListener('click', (e) => {
+  const a = e.target.closest('a');
+  if (!a || !inDiscord) return;
+  e.preventDefault();
+  sdk?.commands.openExternalLink({ url: document.body.dataset.legal + a.getAttribute('href') }).catch(() => {});
+});
+
 async function main() {
-  if (!inDiscord) return say("Open this from Discord: it is the Activity for Matt's the Gathering.");
+  if (!inDiscord) return say("Open this from Discord: it is the Activity for Matt's Forge.");
   if (!clientId) return say("Discord isn't set up on this tracker yet.", 'error');
   try {
     await signIn();

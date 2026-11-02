@@ -49,6 +49,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 .player.ai-row { grid-template-columns: auto 1fr auto; }
 .player-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .player .face { width: 32px; height: 32px; border-radius: 99px; background: var(--border); object-fit: cover; }
+.player .face.talking { box-shadow: 0 0 0 2px #3ba55d, 0 0 10px 2px rgb(59 165 93 / .75); }
 .player .face.ai { display: grid; place-items: center; font: 700 0.72rem var(--font-body); color: var(--muted); border: 1px solid var(--border); }
 .player .meta { grid-column: 2; }
 .player-text .meta { grid-column: auto; }
@@ -98,3 +99,9 @@ ul.choices label.deck-card input { grid-row: 1; margin-top: 26px; }
   border: 1px solid var(--border); background: var(--surface); color: var(--text); width: 100%;
 }
 .import-input:focus { outline: none; border-color: var(--accent); }
+/* The Terms of Service and Privacy Policy pages. */
+.legal a { color: var(--accent); }
+.legal ul { padding-left: 20px; }
+.legal li { margin: 6px 0; }
+footer.legal-links { max-width: 720px; margin: 0 auto; padding: 0 16px 24px; text-align: center; color: var(--muted); font-size: 0.85rem; }
+footer.legal-links a { color: var(--muted); }
