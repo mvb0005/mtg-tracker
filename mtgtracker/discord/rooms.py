@@ -23,7 +23,9 @@ class Member:
     name: str
     joined: float
     avatar: str | None = None
-    deck_id: int | None = None
+    deck_id: int | str | None = None
+    in_game: bool = False
+    left_table: bool = False
     seen: float = 0.0
 
 
@@ -62,6 +64,35 @@ def touch(
         del _ROOMS[empty]
     _ROOMS[instance] = room
     return room
+
+
+def ticket_for(match_id: str, discord_id: str) -> str | None:
+    """This Discord user's seat ticket in a running match started from an Activity room, if any."""
+    with LOCK:
+        for room in _ROOMS.values():
+            if room.started and room.started.get("matchId") == match_id:
+                return room.started.get("tickets", {}).get(discord_id)
+    return None
+
+
+def seated_ids(match_id: str) -> set[str]:
+    """Discord user ids seated in a match started from an Activity room."""
+    with LOCK:
+        for room in _ROOMS.values():
+            if room.started and room.started.get("matchId") == match_id:
+                return set(room.started.get("tickets", {}).keys())
+    return set()
+
+
+def clear_match(match_id: str) -> None:
+    """Clear `started` on any room whose match was ended."""
+    with LOCK:
+        for room in _ROOMS.values():
+            if room.started and room.started.get("matchId") == match_id:
+                room.started = None
+                for m in room.members.values():
+                    m.in_game = False
+                    m.left_table = False
 
 
 def clear() -> None:

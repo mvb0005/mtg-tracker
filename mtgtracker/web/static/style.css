@@ -1049,6 +1049,8 @@ body[data-identity] .deck-section-head { border-bottom: 0; padding-bottom: 6px; 
 .checklist ul { list-style: none; margin: 4px 0 0; padding: 0; columns: 2 160px; column-gap: 20px; font-size: 0.9rem; }
 .checklist li { break-inside: avoid; padding: 2px 0; }
 .checklist-qty { display: inline-block; min-width: 1.6em; font-weight: 700; font-variant-numeric: tabular-nums; }
+.play-import { margin: 18px 0 8px; }
+.play-import .field { width: min(100%, 640px); }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--muted); width: min(100%, 420px); }
 .field input {
   padding: 7px 10px;

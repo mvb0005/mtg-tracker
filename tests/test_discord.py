@@ -10,6 +10,7 @@ import pytest
 
 from mtgtracker import db
 from mtgtracker.discord import auth, rooms
+from mtgtracker.play import routes as play
 
 from .conftest import install_transport
 from .test_multiuser import _cf_client, signer  # noqa: F401 (fixture)
@@ -68,6 +69,7 @@ def discord(monkeypatch, cache_dir):
     monkeypatch.setenv("PLAY_RESULTS_URL", "http://tracker.test")
     monkeypatch.setattr(auth, "EXCHANGES", auth.Limiter())
     rooms.clear()
+    play._IMPORTED.clear()
     fake, forge = FakeDiscord(), FakeGameServer()
     fake.forge = forge
     install_transport(
@@ -76,6 +78,7 @@ def discord(monkeypatch, cache_dir):
     )
     yield fake
     rooms.clear()
+    play._IMPORTED.clear()
 
 
 def _sign_in(client, code):
@@ -160,7 +163,22 @@ def test_starting_seats_everyone_with_a_deck(client, discord, db_path):
     # No picture of their own: Discord's default one for their id, on Discord's CDN.
     assert spec["seats"][0]["avatar"] == f"https://cdn.discordapp.com/embed/avatars/{(111 >> 22) % 6}.png"
     assert _room(client, matt).json()["started"] == {"matchId": "m1", "ticket": "t10" * 4}
-    assert _room(client, sam).json()["started"] == {"matchId": "m1", "ticket": None}
+    sam_view = _room(client, sam).json()
+    assert sam_view["started"] == {"matchId": "m1", "ticket": None}
+    assert [m["name"] for m in sam_view["members"]] == ["Sam"], "players in a game are not in the lobby"
+    assert sam_view["live"] == [{
+        "matchId": "m1",
+        "who": "Matt, Alex",
+        "against": "Neyali",
+        "seats": [
+            {"name": "Matt", "kind": "human", "deck": None},
+            {"name": "Alex", "kind": "human", "deck": None},
+            {"name": "Neyali", "kind": "ai", "deck": None},
+        ],
+        "watchTicket": "w1" * 16,
+        "ticket": None,
+        "seated": False,
+    }]
     conn = db.connect(db_path)
     row = conn.execute("SELECT host_id, deck_name, opponents, status FROM play_games").fetchone()
     conn.close()
@@ -177,6 +195,21 @@ def test_a_room_picks_again_once_its_game_is_over(client, discord, db_path):
     res = client.post("/play/results", json=result, headers={"Authorization": f"Bearer {SECRET}"})
     assert res.status_code == 204
     assert _room(client, matt).json()["started"] is None
+
+
+def test_importing_a_deck_url_adds_and_selects_it(client, discord):
+    matt = _session(client, discord, "111", "Matt")
+    bad = _room(client, matt, importUrl="https://example.com/bad").json()
+    assert "Moxfield" in bad["error"]
+    ok = _room(client, matt, importUrl="https://moxfield.com/decks/abc123").json()
+    assert ok["error"] is None
+    me = ok["members"][0]
+    assert me["deck"]["name"] == "Moxfield Dragons"
+    assert me["deck"]["commander"] == "Miirym, Sentinel Wyrm"
+    assert any(d["name"] == "Moxfield Dragons" for d in ok["decks"])
+    _room(client, matt, opponents=[f"deck:{me['deck']['id']}"])
+    started = _room(client, matt, start=True).json()
+    assert started["started"]["matchId"] == "m1"
 
 
 def test_a_room_needs_two_seats_and_a_deck(client, discord, db_path):

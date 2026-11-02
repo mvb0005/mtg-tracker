@@ -58,6 +58,23 @@ class FakeGameServer:
         path, method = request.url.path, request.method
         if path == "/opponents":
             return httpx.Response(200, json={"opponents": ROSTER})
+        if path == "/decks/import-url" and method == "POST":
+            body = json.loads(request.content)
+            url = body.get("url", "")
+            if "bad" in url:
+                return httpx.Response(200, json={"ok": False, "error": "Only Moxfield, Archidekt, TappedOut, MTGGoldfish deck URLs are supported."})
+            return httpx.Response(200, json={
+                "ok": True,
+                "name": "Moxfield Dragons",
+                "commander": "Miirym, Sentinel Wyrm",
+                "colors": "URG",
+                "manaCost": "{3}{G}{U}{R}",
+                "typeLine": "Legendary Creature — Dragon Spirit",
+                "oracleText": "Ward {2}",
+                "pt": "6/6",
+                "list": "Commander\n1 Miirym, Sentinel Wyrm\n\nDeck\n99 Mountain\n",
+                "sourceUrl": url,
+            })
         if path == "/match" and method == "GET":
             if self.match:
                 return httpx.Response(
@@ -65,7 +82,9 @@ class FakeGameServer:
                     json={
                         "state": "playing",
                         "matchId": self.match,
-                        "seats": [{"index": 0, "kind": "human", "name": "Owner", "person": "1"}],
+                        "watchTicket": f"w{self.n}" * 16,
+                        "seats": getattr(self, "seats", None)
+                        or [{"index": 0, "kind": "human", "name": "Owner", "person": "1"}],
                     },
                 )
             body = {"state": "finished" if self.result else "idle"}
@@ -90,7 +109,8 @@ class FakeGameServer:
                 }
                 for i, s in enumerate(spec["seats"])
             ]
-            return httpx.Response(201, json={"matchId": self.match, "seats": seats})
+            self.seats = seats
+            return httpx.Response(201, json={"matchId": self.match, "watchTicket": f"w{self.n}" * 16, "seats": seats})
         if path.startswith("/match/") and method == "DELETE":
             if self.match != path.split("/")[-1]:
                 return httpx.Response(404, json={"error": "No running match with that id"})
@@ -105,6 +125,8 @@ def forge(monkeypatch, cache_dir):
     monkeypatch.setenv("FORGE_CONTROL_URL", "http://forge.test")
     monkeypatch.setenv("FORGE_CONTROL_SECRET", SECRET)
     monkeypatch.setenv("PLAY_RESULTS_URL", "http://tracker.test")
+    from mtgtracker.play import routes as play
+    play._IMPORTED.clear()
     fake = FakeGameServer()
     install_transport(monkeypatch, httpx.MockTransport(fake))
     return fake
@@ -135,6 +157,25 @@ def test_play_page_lists_your_decks_and_the_roster(client, forge):
     assert "Neyali" in page.text
     assert "Go-wide aggro" in page.text
     assert 'href="/play" aria-current="page"' in page.text
+    assert "Import a deck from a URL" in page.text
+    assert "Moxfield" in page.text
+
+
+def test_import_url_adds_a_deck_you_can_start(client, forge, db_path):
+    from mtgtracker.play import routes as play
+
+    bad = client.post("/play/import", data={"url": "https://example.com/bad"}, follow_redirects=False)
+    assert "Moxfield" in _error(bad)
+    ok = client.post("/play/import", data={"url": "https://moxfield.com/decks/abc123"}, follow_redirects=False)
+    assert ok.status_code == 303
+    page = client.get("/play")
+    assert "Moxfield Dragons" in page.text
+    assert "Imported from moxfield.com" in page.text
+    did = next(iter(play._IMPORTED))
+    res = _start(client, did, "neyali")
+    assert res.status_code == 303
+    assert forge.specs[-1]["seats"][0]["deck"]["name"] == "Moxfield Dragons"
+    assert forge.specs[-1]["seats"][0]["deck"]["list"].startswith("Commander\n1 Miirym")
 
 
 def test_play_page_without_a_game_server(client, cache_dir, monkeypatch):
