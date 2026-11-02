@@ -41,10 +41,12 @@ class GameServer:
             (os.environ.get("FORGE_TABLE_URL", "").strip() or "/play/table").rstrip("/") + "/",
         )
 
-    def _call(self, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+    def _call(
+        self, method: str, path: str, body: dict | None = None, timeout: float = TIMEOUT
+    ) -> tuple[int, dict]:
         headers = {"Authorization": f"Bearer {self.secret}"} if self.secret else {}
         try:
-            with httpx.Client(timeout=TIMEOUT) as client:
+            with httpx.Client(timeout=timeout) as client:
                 res = client.request(method, self.base_url + path, json=body, headers=headers)
         except httpx.HTTPError as exc:
             raise UpstreamError("The game server isn't answering") from exc
@@ -65,6 +67,13 @@ class GameServer:
         """None when Forge can play the list, else what's wrong with it."""
         body = self._call("POST", "/decks/check", {"name": name, "list": text})[1]
         return None if body.get("ok") else body.get("error", "Forge can't play this deck")
+
+    def import_url(self, url: str) -> dict:
+        """Imports a Commander deck from a Moxfield, Archidekt, TappedOut or MTGGoldfish URL."""
+        body = self._call("POST", "/decks/import-url", {"url": url}, timeout=45.0)[1]
+        if not body.get("ok"):
+            raise ServiceError(body.get("error", "Forge couldn't import that deck URL"))
+        return body
 
     def start(self, spec: dict) -> dict:
         """{matchId, seats: [{index, kind, name, person?, ticket?}]}. Busy when a match is running."""

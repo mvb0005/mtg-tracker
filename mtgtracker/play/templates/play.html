@@ -21,15 +21,25 @@
   {% endfor %}
   {% for t in others %}
   <div class="play-game">
-    <p>{{ t.who }} {{ "is" if "," not in t.who else "are" }} playing.</p>
-    {% if can_end_any %}
-    <form method="post" action="/play/end"><input type="hidden" name="match_id" value="{{ t.matchId }}"><button type="submit" class="btn">End their game</button></form>
-    {% endif %}
+    <p>{{ t.who }} {{ "is" if "," not in t.who else "are" }} playing.{% if t.against %} <span class="subtle">Against {{ t.against }}.</span>{% endif %}</p>
+    <div class="play-actions">
+      {% if t.ticket and table_link %}<a class="btn primary" href="{{ table_link(t.matchId, t.ticket) }}">Rejoin game</a>{% elif t.watchTicket and table_link %}<a class="btn primary" href="{{ table_link(t.matchId, t.watchTicket) }}">Spectate</a>{% endif %}
+      {% if can_end_any %}
+      <form method="post" action="/play/end"><input type="hidden" name="match_id" value="{{ t.matchId }}"><button type="submit" class="btn">End their game</button></form>
+      {% endif %}
+    </div>
   </div>
   {% endfor %}
   {% if full %}<p class="subtle">{% if capacity == 1 %}The game server hosts one game at a time. You can start one when this one ends.{% else %}All {{ capacity }} tables are in use. You can start a game when one ends.{% endif %}</p>{% endif %}
 </section>
 {% endif %}
+
+<form method="post" action="/play/import" class="import-form play-import">
+  <h2>Import a deck from a URL</h2>
+  <p class="subtle">Moxfield, Archidekt, TappedOut or MTGGoldfish. Forge loads the list and it appears below, ready to play.</p>
+  <label class="field">Deck URL <input type="text" name="url" required maxlength="500" inputmode="url" placeholder="https://www.moxfield.com/decks/…" {% if problem %}disabled{% endif %}></label>
+  <button type="submit"{% if problem %} disabled{% endif %}>Import URL</button>
+</form>
 
 <form method="post" action="/play/start" class="play-form">
   <h2>Your deck</h2>
@@ -39,14 +49,14 @@
     <li>
       <label{% if not d.commander %} class="disabled"{% endif %}>
         <input type="radio" name="deck_id" value="{{ d.id }}" {% if not d.commander %}disabled{% elif loop.first %}checked{% endif %}>
-        <span class="play-name">{{ d.name }}</span>
-        <span class="play-meta">{% if d.commander %}{{ d.commander }}{% else %}No commander yet: <a href="/decks/{{ d.id }}">pick one on its page</a>{% endif %}{% if d.wanted_count %} · plays {{ d.wanted_count }} card{{ "s" if d.wanted_count != 1 }} you don't own yet{% endif %}</span>
+        <span class="play-name">{{ d.name }}{% if d.archetype %} <span class="tag">{{ d.archetype }}</span>{% endif %}</span>
+        <span class="play-meta">{% if d.commander %}{{ d.commander }}{% if d.plan %} · {{ d.plan }}{% endif %}{% else %}No commander yet: <a href="/decks/{{ d.id }}">pick one on its page</a>{% endif %}{% if d.wanted_count %} · plays {{ d.wanted_count }} card{{ "s" if d.wanted_count != 1 }} you don't own yet{% endif %}</span>
       </label>
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="empty">You have no decks yet. <a href="/decks">Make one</a> from a decklist.</p>
+  <p class="empty">You have no decks yet. <a href="/decks">Make one</a> from a decklist, or import a URL above.</p>
   {% endif %}
 
   <h2>Opponents <span class="subtle">one to three</span></h2>
@@ -56,8 +66,8 @@
     <li>
       <label>
         <input type="checkbox" name="opponent" value="{{ o.id }}"{% if loop.index <= 2 %} checked{% endif %}>
-        <span class="play-name">{{ o.commander.split(",")[0] }} <span class="tag">{{ o.archetype }}</span></span>
-        <span class="play-meta">{{ o.plan }} {{ o.deck }}.</span>
+        <span class="play-name">{{ o.commander }} <span class="tag">{{ o.archetype }}</span></span>
+        <span class="play-meta">{{ o.plan }} {{ o.deck }}.{% if o.typeLine or o.pt %} · {{ o.typeLine }}{% if o.pt %} ({{ o.pt }}){% endif %}{% endif %}</span>
       </label>
     </li>
     {% endfor %}
