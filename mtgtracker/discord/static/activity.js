@@ -162,6 +162,7 @@ async function signIn() {
     sdk.subscribe(Events.ACTIVITY_LAYOUT_MODE_UPDATE, (e) => {
       pip = e.layout_mode === 1;
       tellTable();
+      if (room) render();
     }).catch(() => {});
   }
   // Voice has to be on this first authorize: the SDK only authenticates once. prompt none if they already
@@ -205,6 +206,36 @@ async function send(change = {}) {
   render();
 }
 
+// Discord's minimized Picture-in-Picture tile, or a frame too small for the lobby (as the table does).
+const isMini = () => pip || innerWidth < 560 || innerHeight < 340;
+
+/** The lobby at a glance: what's next (gold when someone should act), and who has picked a deck. */
+function miniLobby(r, me, seated, seats, ready) {
+  const act = !r.started && !r.starting && (!me?.deck || ready);
+  const headline = r.started ? 'A game is on'
+    : r.starting ? 'Starting…'
+      : !me?.deck ? 'Pick a deck'
+        : ready ? 'Ready to start'
+          : 'Waiting for players';
+  const ais = r.opponents.length;
+  const sub = [`${seats} of ${r.maxSeats} seats`, `${seated.length} of ${r.members.length} picked`, ais ? `${ais} AI` : null]
+    .filter(Boolean).join(' · ');
+  const cell = (m) => el('div', { class: m.deck ? 'mini-seat picked' : 'mini-seat' },
+    m.avatar
+      ? el('img', { class: speaking.has(m.id) ? 'face talking' : 'face', src: face(m.avatar), alt: '' })
+      : el('span', { class: speaking.has(m.id) ? 'face talking' : 'face' }),
+    el('div', { class: 'player-text' },
+      el('span', { class: 'name' }, m.id === r.you ? `${m.name} (you)` : m.name),
+      el('span', { class: 'meta' }, m.deck ? `✓ ${m.deck.commander}` : 'picking…')));
+  return el('div', { class: act ? 'mini-lobby act' : 'mini-lobby' },
+    el('div', {},
+      el('div', { class: 'mini-head' }, el('span', { class: 'mini-dot' }), el('span', { class: 'mini-title' }, headline)),
+      el('div', { class: 'mini-sub' }, sub)),
+    el('div', { class: 'mini-seats' }, r.members.map(cell)));
+}
+
+addEventListener('resize', () => { if (room) render(); });
+
 function render() {
   const r = room;
   if (r.started?.ticket && r.started.matchId !== closed) openTable(r.started.matchId, r.started.ticket);
@@ -213,6 +244,14 @@ function render() {
   const seated = r.members.filter((m) => m.deck);
   const seats = seated.length + r.opponents.length;
   const full = seats >= r.maxSeats;
+  const ready = seated.length > 0 && seats >= 2 && seats <= r.maxSeats && !r.starting && !r.started;
+
+  const mini = isMini();
+  document.body.classList.toggle('mini', mini);
+  if (mini) {
+    app.replaceChildren(miniLobby(r, me, seated, seats, ready));
+    return;
+  }
 
   const aiDeck = (key) => {
     if (String(key).startsWith('deck:')) {
@@ -392,7 +431,6 @@ function render() {
       el('div', { class: 'actions' },
         el('button', { type: 'button', onclick: () => { previewItem = null; render(); } }, 'Close'))))) : null;
 
-  const ready = seated.length > 0 && seats >= 2 && seats <= r.maxSeats && !r.starting && !r.started;
   show(
     r.problem ? el('p', { class: 'error' }, r.problem) : null,
     liveGames.length ? el('section', {}, el('h2', {}, 'Live games'), ...liveGames) : null,

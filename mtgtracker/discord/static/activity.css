@@ -105,3 +105,34 @@ ul.choices label.deck-card input { grid-row: 1; margin-top: 26px; }
 .legal li { margin: 6px 0; }
 footer.legal-links { max-width: 720px; margin: 0 auto; padding: 0 16px 24px; text-align: center; color: var(--muted); font-size: 0.85rem; }
 footer.legal-links a { color: var(--muted); }
+/* The minimized (Picture-in-Picture) lobby: a status tile, as the table has. */
+body.mini main { max-width: none; padding: 0; }
+body.mini footer.legal-links { display: none; }
+.mini-lobby {
+  position: fixed; inset: 0; padding: 10px 12px; display: flex; flex-direction: column; justify-content: space-between; gap: 6px;
+  background: linear-gradient(180deg, #1c1b19, #0d0c0b); box-shadow: inset 0 0 0 1.5px var(--border); overflow: hidden;
+}
+.mini-lobby.act {
+  background: linear-gradient(180deg, rgb(66 50 18 / .96), rgb(20 15 9 / .98));
+  box-shadow: inset 0 0 0 2.5px var(--warn), inset 0 0 28px rgb(226 191 98 / .2);
+}
+.mini-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.mini-dot { width: 10px; height: 10px; border-radius: 99px; flex: none; background: var(--muted); }
+.mini-lobby.act .mini-dot { background: var(--warn); box-shadow: 0 0 10px var(--warn); animation: mini-breathe 1.6s ease-in-out infinite; }
+@keyframes mini-breathe { 50% { opacity: 0.45; } }
+.mini-title {
+  font: 800 16px/1.1 var(--font-body); letter-spacing: 0.06em; text-transform: uppercase;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mini-lobby.act .mini-title { color: var(--warn); }
+.mini-sub { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini-seats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.mini-seat {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 6px; align-items: center; padding: 4px 6px;
+  border: 1px solid var(--border); border-radius: 5px; background: rgb(0 0 0 / .25); font-size: 11.5px; line-height: 1.2;
+}
+.mini-seat .face { width: 22px; height: 22px; border-radius: 99px; background: var(--border); object-fit: cover; }
+.mini-seat .face.talking { box-shadow: 0 0 0 2px #3ba55d, 0 0 8px 1px rgb(59 165 93 / .75); }
+.mini-seat .name, .mini-seat .meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini-seat .meta { color: var(--muted); font-size: 10.5px; }
+.mini-seat.picked .meta { color: #7fc98f; }
