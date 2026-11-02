@@ -125,11 +125,16 @@ def forge(monkeypatch, cache_dir):
     monkeypatch.setenv("FORGE_CONTROL_URL", "http://forge.test")
     monkeypatch.setenv("FORGE_CONTROL_SECRET", SECRET)
     monkeypatch.setenv("PLAY_RESULTS_URL", "http://tracker.test")
-    from mtgtracker.play import routes as play
+    from mtgtracker.play import lobbies, routes as play
     play._IMPORTED.clear()
+    play._roster = (0.0, [])
+    lobbies.clear()
     fake = FakeGameServer()
     install_transport(monkeypatch, httpx.MockTransport(fake))
-    return fake
+    yield fake
+    lobbies.clear()
+    play._IMPORTED.clear()
+    play._roster = (0.0, [])
 
 
 def _deck(db_path, name="Reign of Dragons"):
@@ -159,6 +164,8 @@ def test_play_page_lists_your_decks_and_the_roster(client, forge):
     assert 'href="/play" aria-current="page"' in page.text
     assert "Import a deck from a URL" in page.text
     assert "Moxfield" in page.text
+    assert "Open a lobby" in page.text
+    assert "Play with friends" in page.text
 
 
 def test_import_url_adds_a_deck_you_can_start(client, forge, db_path):
@@ -452,3 +459,114 @@ def test_replays_need_no_sign_in(db_path, forge, signer):  # noqa: F811
     client = _cf_client(db_path, signer)
     assert _upload(client, "/play/replays/0123456789abcdef/0").status_code == 204
     assert client.get("/play/games/0123456789abcdef/replay/0").status_code == 401
+
+
+def _friend(db_path, name="Alex", email="alex@example.com"):
+    conn = db.connect(db_path)
+    friend = users.create(conn, name, email)
+    cur = conn.execute(
+        "INSERT INTO decks (name, format, commander, created_at, owner_id)"
+        " VALUES (?, 'Commander', ?, '2026-11-01', ?)",
+        (f"{name}'s deck", "Miirym, Sentinel Wyrm", friend.id),
+    )
+    deck_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    other = TestClient(create_app(db_path, auth=AuthConfig(mode="dev")))
+    other.cookies.set(DEV_COOKIE, str(friend.id))
+    return other, friend, deck_id
+
+
+def _lobby(client, code, **change):
+    return client.post(f"/play/lobby/{code}", json=change)
+
+
+def test_open_a_lobby_and_play_with_a_friend(client, forge, db_path):
+    created = client.post("/play/lobby", follow_redirects=False)
+    assert created.status_code == 303
+    path = created.headers["location"]
+    assert path.startswith("/play/lobby/")
+    code = path.rsplit("/", 1)[-1]
+    page = client.get(path)
+    assert page.status_code == 200
+    assert "play-lobby.js" in page.text
+    assert client.get("/static/play-lobby.js").status_code == 200
+
+    matt_deck = _deck(db_path)["id"]
+    first = _lobby(client, code).json()
+    assert first["you"] == "1"
+    assert [m["name"] for m in first["members"]] == ["Owner"]
+    assert any(d["name"] == "Reign of Dragons" for d in first["decks"])
+    assert [o["id"] for o in first["roster"]] == ["neyali", "jeleva"]
+
+    alex, friend, alex_deck = _friend(db_path)
+    _lobby(client, code, deckId=matt_deck)
+    view = _lobby(alex, code, deckId=alex_deck).json()
+    assert view["you"] == str(friend.id)
+    assert [(m["name"], m["deck"] and m["deck"]["name"]) for m in view["members"]] == [
+        ("Owner", "Reign of Dragons"),
+        ("Alex", "Alex's deck"),
+    ]
+    assert all(d["name"] != "Reign of Dragons" for d in view["decks"]), "Alex only sees her own decks"
+    _lobby(client, code, opponents=["neyali", "made-up"])
+    assert _lobby(alex, code).json()["opponents"] == ["neyali"], "Alex sees the AI Owner added"
+
+    started = _lobby(alex, code, start=True).json()
+    assert started["error"] is None
+    assert started["started"]["matchId"] == "m1"
+    assert started["started"]["tableUrl"] == "/play/table/m1/?ticket=" + "t11" * 4
+    spec = forge.specs[-1]
+    assert spec["returnUrl"] == f"/play/lobby/{code}"
+    assert [(s["kind"], s.get("name"), s.get("person")) for s in spec["seats"]] == [
+        ("human", "Owner", "1"),
+        ("human", "Alex", str(friend.id)),
+        ("ai", None, None),
+    ]
+    matt_view = _lobby(client, code).json()
+    assert matt_view["started"]["ticket"] == "t10" * 4
+    assert matt_view["members"] == [], "players in a game are not in the lobby"
+    conn = db.connect(db_path)
+    row = conn.execute("SELECT host_id, deck_name, opponents, status FROM play_games").fetchone()
+    conn.close()
+    assert (row["host_id"], row["deck_name"], row["status"]) == (friend.id, "Reign of Dragons", "playing")
+    assert [o["name"] for o in json.loads(row["opponents"])] == ["Alex", "Neyali"]
+    assert _lobby(client, code, start=True).json()["started"]["matchId"] == "m1", "one game per lobby"
+
+
+def test_a_lobby_picks_again_once_its_game_is_over(client, forge, db_path):
+    created = client.post("/play/lobby", follow_redirects=False)
+    code = created.headers["location"].rsplit("/", 1)[-1]
+    _lobby(client, code, deckId=_deck(db_path)["id"], opponents=["neyali"])
+    assert _lobby(client, code, start=True).json()["started"]["matchId"] == "m1"
+    result = {"matchId": "m1", "status": "finished"}
+    res = client.post("/play/results", json=result, headers={"Authorization": f"Bearer {SECRET}"})
+    assert res.status_code == 204
+    assert _lobby(client, code).json()["started"] is None
+
+
+def test_importing_a_deck_url_in_a_lobby_adds_and_selects_it(client, forge):
+    created = client.post("/play/lobby", follow_redirects=False)
+    code = created.headers["location"].rsplit("/", 1)[-1]
+    bad = _lobby(client, code, importUrl="https://example.com/bad").json()
+    assert "Moxfield" in bad["error"]
+    ok = _lobby(client, code, importUrl="https://moxfield.com/decks/abc123").json()
+    assert ok["error"] is None
+    me = ok["members"][0]
+    assert me["deck"]["name"] == "Moxfield Dragons"
+    assert me["deck"]["commander"] == "Miirym, Sentinel Wyrm"
+    assert any(d["name"] == "Moxfield Dragons" for d in ok["decks"])
+    _lobby(client, code, opponents=[f"deck:{me['deck']['id']}"])
+    started = _lobby(client, code, start=True).json()
+    assert started["started"]["matchId"] == "m1"
+
+
+def test_a_lobby_needs_two_seats_and_a_deck(client, forge, db_path):
+    created = client.post("/play/lobby", follow_redirects=False)
+    code = created.headers["location"].rsplit("/", 1)[-1]
+    assert _lobby(client, code, start=True).json()["error"] == "Pick a deck first"
+    _lobby(client, code, deckId=_deck(db_path)["id"])
+    assert _lobby(client, code, start=True).json()["error"].startswith("A game needs 2 to 4 players")
+    me = _lobby(client, code, deckId=999999).json()["members"][0]
+    assert me["deck"]["name"] == "Reign of Dragons", "unknown deck ids are ignored"
+    assert client.get("/play/lobby/not-a-code").status_code == 404
+    assert _lobby(client, "not-a-code").status_code == 404
