@@ -3,8 +3,15 @@
 {% block title %}Play{% endblock %}
 {% block content %}
 <h1>Play</h1>
-<p class="subtle">Goldfish a deck against AI commanders that each play one clear plan.</p>
+<p class="subtle">Goldfish a deck against AI, or open a lobby and send friends the link.</p>
 {% include "_flash.html" %}
+<section class="play-friends">
+  <h2>Play with friends</h2>
+  <p class="subtle">Anyone who can sign in to this tracker can sit down. Each of you picks a commander; anyone can add AIs.</p>
+  <form method="post" action="/play/lobby">
+    <button type="submit" class="primary"{% if problem %} disabled{% endif %}>Open a lobby</button>
+  </form>
+</section>
 {% if problem %}<div class="flash err" role="alert">{{ problem }}</div>{% endif %}
 
 {% if mine or others %}

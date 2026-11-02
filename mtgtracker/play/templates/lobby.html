@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% set active = "play" %}
+{% block title %}Lobby{% endblock %}
+{% block content %}
+<h1>Lobby</h1>
+<p class="subtle">Share this page with friends who can sign in. Each of you picks a commander; hit + to add an AI.</p>
+<p class="play-share">
+  <label class="field">Invite link
+    <input type="text" id="lobby-link" readonly value="{{ request.url }}">
+  </label>
+  <button type="button" id="lobby-copy">Copy link</button>
+</p>
+<div id="lobby" data-code="{{ code }}">Joining the lobby…</div>
+<script src="{{ url_for('static', path='play-lobby.js') }}?v={{ static_version('play-lobby.js') }}" defer></script>
+{% endblock %}

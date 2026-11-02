@@ -7,5 +7,6 @@ the tracker only through users and deck exports:
 - `forge`: the game server's control API (start a match from a spec, read it, end it).
 - `tables`: where games run: a game server pod per game (with a warm spare) or one shared server.
 - `games`: the play_games history, completed by the game server's results.
-- `routes`: /play (the play page), /play/start, /play/end, and /play/results for the game server.
+- `lobbies`: in-memory /play/lobby/<code> rooms where signed-in friends sit down together.
+- `routes`: /play (goldfish), /play/lobby, /play/start, /play/end, and /play/results for the game server.
 """
