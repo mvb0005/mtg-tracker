@@ -32,6 +32,9 @@ API = "https://kubernetes.default.svc"
 STATE = "forge/state"  # spare | playing | done (over, the pod closes itself soon)
 READY_WAIT = 60.0
 SWEEP_EVERY = 30.0
+# How often the sweeper looks at the table template between sweeps: a deploy (a new image there) is
+# swept at once, so the spare moves to the new build within seconds, not up to SWEEP_EVERY.
+TEMPLATE_EVERY = 3.0
 
 
 def from_env() -> OneServer | Pods | None:
@@ -271,6 +274,17 @@ class Pods:
 _sweeper: threading.Thread | None = None
 
 
+def sweep_tick(tables: Pods, state: dict, now: float) -> bool:
+    """One sweeper step: sweep when the template's image changed (a deploy) or SWEEP_EVERY has passed.
+    `state` carries the last image and sweep time between steps. Returns whether it swept."""
+    image = _image(tables._template())
+    if image == state.get("image") and now - state.get("swept_at", -SWEEP_EVERY) < SWEEP_EVERY:
+        return False
+    tables.sweep()
+    state["image"], state["swept_at"] = image, now
+    return True
+
+
 def start_sweeper() -> None:
     """Keeps the spare warm and clears finished tables between page loads (pods mode only)."""
     global _sweeper
@@ -279,12 +293,14 @@ def start_sweeper() -> None:
         return
 
     def run() -> None:
+        state: dict = {}
         while True:
             try:
-                tables.sweep()
+                sweep_tick(tables, state, time.monotonic())
             except ServiceError as exc:
+                state.pop("swept_at", None)
                 print(f"play: table sweep failed: {exc}", flush=True)
-            time.sleep(SWEEP_EVERY)
+            time.sleep(TEMPLATE_EVERY)
 
     _sweeper = threading.Thread(target=run, name="play-tables", daemon=True)
     _sweeper.start()

@@ -47,7 +47,7 @@ if [[ ${1:-} == --rollback ]]; then
 fi
 
 [[ -z $(git status --porcelain -uno) ]] || { echo "Uncommitted changes: commit first, so the build is a commit you can revert." >&2; exit 1; }
-.venv/Scripts/python -m pytest -q -x
+.venv/Scripts/python -m pytest -q -x -n auto
 prev=$(image)
 in_wsl "bash deploy/minikube.sh up"
 now=$(image)

@@ -235,3 +235,16 @@ def test_extra_spares_are_trimmed(cluster):
     assert len(cluster.pods) == 2
     where.sweep()
     assert len(cluster.pods) == 1
+
+
+def test_the_sweeper_sweeps_at_once_when_a_deploy_changes_the_template(cluster):
+    where = tables.Pods.from_env()
+    state: dict = {}
+    assert tables.sweep_tick(where, state, 0.0)  # first look: sweeps (warms a spare)
+    assert not tables.sweep_tick(where, state, 3.0)  # nothing changed, not due yet
+    cluster.image = "forge-web:two"
+    assert tables.sweep_tick(where, state, 6.0)  # a deploy: swept now, not at SWEEP_EVERY
+    (spare,) = cluster.by_state("spare")
+    assert spare["spec"]["containers"][0]["image"] == "forge-web:two"
+    assert not tables.sweep_tick(where, state, 9.0)
+    assert tables.sweep_tick(where, state, 6.0 + tables.SWEEP_EVERY)  # and still every SWEEP_EVERY
