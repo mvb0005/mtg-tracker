@@ -92,12 +92,18 @@ apply_auth_config() {
 
 cmd_up() {
   minikube status >/dev/null 2>&1 || minikube start
-  minikube image build -t "$IMAGE" .
-  "${KUBECTL_BASE[@]}" apply -k deploy/k8s
-  apply_auth_config
-  # Pick up a rebuilt image under the same tag.
-  "${KUBECTL[@]}" rollout restart deployment/mtgtracker
+  # A tag per build (commit + time), so every deploy is its own rollout and
+  # `kubectl rollout undo deployment/mtgtracker` puts the previous build back
+  # (deploy/ship.sh --rollback). The old images stay in minikube.
+  local tag
+  tag="mtgtracker:$(git rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)"
+  [[ -z $(git status --porcelain -uno) ]] || tag+="-dirty"
+  minikube image build -t "$tag" .
+  "${KUBECTL_BASE[@]}" apply -f deploy/k8s/namespace.yaml >/dev/null
+  apply_auth_config  # before the rollout, so the new pod starts with it
+  "${KUBECTL_BASE[@]}" kustomize deploy/k8s | sed "s#image: $IMAGE#image: $tag#" | "${KUBECTL_BASE[@]}" apply -f -
   "${KUBECTL[@]}" rollout status deployment/mtgtracker --timeout=120s
+  echo "Running $tag"
 }
 
 # Bring an existing cluster back after a reboot. Builds nothing, applies
