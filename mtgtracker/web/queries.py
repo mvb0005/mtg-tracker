@@ -250,8 +250,9 @@ def get_deck(
 
 def deck_tokens(groups: list[dict]) -> list[dict]:
     """Every token (or emblem) the deck's cards can make, wanted cards
-    included: {name, type_line, image, sources (card names)}, by name. Only
-    as complete as the Scryfall cache and its `all_parts` links."""
+    included: {name, type_line, image, sources (the deck's display rows for
+    the cards that make it, one per name)}, by name. Only as complete as the
+    Scryfall cache and its `all_parts` links."""
     tokens: dict[tuple[str, str], dict] = {}
     for g in groups:
         for t in cardinfo.tokens_for(g.get("scryfall_id"), g["card_name"]):
@@ -259,8 +260,8 @@ def deck_tokens(groups: list[dict]) -> list[dict]:
                 "name": t["name"], "type_line": t["type_line"],
                 "image": cardinfo.token_image(t["id"]), "sources": [],
             })
-            if g["card_name"] not in entry["sources"]:
-                entry["sources"].append(g["card_name"])
+            if all(src["card_name"] != g["card_name"] for src in entry["sources"]):
+                entry["sources"].append(g)
     return sorted(tokens.values(), key=lambda t: (t["name"].casefold(), t["type_line"]))
 
 

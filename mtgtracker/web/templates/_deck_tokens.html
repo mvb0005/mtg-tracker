@@ -1,6 +1,7 @@
 {# Tokens the deck's cards can make (queries.deck_tokens, from Scryfall's
-   all_parts links in the cache). Token tiles are captioned, unlike card
-   tiles: the image doesn't say which of your cards makes it. #}
+   all_parts links in the cache). Each token sits beside the cards that make
+   it, as small tiles carrying the deck rows' data-card, so hovering (or
+   tapping) one shows that exact card in the panel. #}
 <details class="breakdown deck-tokens" id="tokens">
   <summary>
     <span class="deck-notes-label">Tokens</span>
@@ -9,14 +10,23 @@
   </summary>
   <div class="token-grid">
     {% for t in tokens %}
-    <figure class="token">
-      <img src="{{ t.image }}" alt="{{ t.name }} ({{ t.type_line }})" loading="lazy" referrerpolicy="no-referrer">
-      <figcaption>
-        <strong>{{ t.name }}</strong> <span class="subtle">{{ t.type_line | replace("Token ", "", 1) }}</span>
-        <span class="token-from">from {{ t.sources | join(", ") }}</span>
-      </figcaption>
-    </figure>
+    <section class="token">
+      <img class="token-art" src="{{ t.image }}" alt="{{ t.name }} ({{ t.type_line }})" loading="lazy" referrerpolicy="no-referrer">
+      <div class="token-body">
+        <div class="token-name"><strong>{{ t.name }}</strong> <span class="subtle">{{ t.type_line | replace("Token ", "", 1) }}</span></div>
+        <div class="token-from">Made by {{ t.sources | length }} card{{ "s" if t.sources | length != 1 }}</div>
+        <ul class="token-sources">
+          {% for c in t.sources %}
+          <li class="token-source" data-card='{{ cards.panel_json(c, "deck") }}' tabindex="0" title="{{ c.card_name }}">
+            {% if c.art.image %}<img src="{{ c.art.image }}" alt="{{ c.card_name }}" loading="lazy" referrerpolicy="no-referrer">
+            {% else %}<span class="tile-placeholder"><span>{{ c.card_name }}</span></span>{% endif %}
+            <span class="token-source-name">{{ c.card_name }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </section>
     {% endfor %}
   </div>
-  <p class="subtle token-note">From Scryfall's links between cards and the tokens they make. Cards without cached data, and effects that copy other permanents, aren't listed.</p>
+  <p class="subtle token-note">Hover or tap a card to see it. From Scryfall's links between cards and the tokens they make; cards without cached data, and effects that copy other permanents, aren't listed.</p>
 </details>
