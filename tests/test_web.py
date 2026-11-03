@@ -650,5 +650,7 @@ def test_deck_page_lists_the_tokens_its_cards_make(client, db_path, cache_dir):
     assert '<details class="breakdown deck-tokens" id="tokens">' in html
     assert "1 kind this deck can make" in html
     assert "<strong>Dragon</strong>" in html
-    assert "from Lathliss, Dragon Queen" in html
+    assert "Made by 1 card" in html
+    source = re.search(r"<li class=\"token-source\" data-card='([^']*)'", html)
+    assert json.loads(source.group(1))["name"] == "Lathliss, Dragon Queen"  # hover shows the exact card
     assert "https://cards.scryfall.io/normal/front/a/1/a1b2c3d4-0000-0000-0000-000000000001.jpg" in html
