@@ -322,6 +322,13 @@ function render() {
           onclick: () => removeAi(idx),
         }, '×')));
     }),
+    // Open seats keep the list at the table's size, so adding an AI doesn't push the page down.
+    Array.from({ length: Math.max(0, r.maxSeats - r.members.length - r.opponents.length) }, () =>
+      el('li', {}, el('div', { class: 'player open-seat' },
+        el('span', { class: 'face open' }),
+        el('div', { class: 'player-text' },
+          el('span', { class: 'name' }, 'Open seat'),
+          el('span', { class: 'meta' }, 'Pick a deck below, or hit + to add an AI'))))),
   );
 
   const deckRow = (item, pickId, aiKey, deckName) => {

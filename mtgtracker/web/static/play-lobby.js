@@ -138,6 +138,13 @@ function render() {
             el('span', { class: 'play-meta' }, sub)),
           el('button', { type: 'button', class: 'icon-btn', title: `Remove ${title}`, onclick: () => removeAi(idx) }, '×')));
     }),
+    // Open seats keep the list at the table's size, so adding an AI doesn't push the page down.
+    Array.from({ length: Math.max(0, r.maxSeats - r.members.length - r.opponents.length) }, () =>
+      el('li', {}, el('div', { class: 'play-player open-seat' },
+        el('span', { class: 'cmd-mini open' }),
+        el('div', { class: 'play-player-text' },
+          el('span', { class: 'play-name' }, 'Open seat'),
+          el('span', { class: 'play-meta' }, 'Pick a deck below, or hit + to add an AI'))))),
   );
   const deckRow = (item, pickId, aiKey, deckName) => {
     const cmd = item.commander || deckName;

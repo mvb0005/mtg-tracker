@@ -1055,6 +1055,9 @@ body[data-identity] .deck-section-head { border-bottom: 0; padding-bottom: 6px; 
 .play-share .field { margin: 0; flex: 1 1 240px; }
 .play-player { display: grid; grid-template-columns: auto 1fr auto; gap: 2px 12px; padding: 8px; align-items: center; }
 .play-player-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.play-player { grid-template-rows: minmax(47px, auto); }
+.play-player.open-seat .play-name, .play-player.open-seat .play-meta { color: var(--muted); }
+.cmd-mini.open { border-style: dashed; cursor: default; }
 .play-choices .deck-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: stretch; border-bottom: 1px solid var(--border); }
 .play-choices .deck-row label.deck-card { display: grid; grid-template-columns: 22px 56px 1fr; gap: 2px 12px; align-items: start; margin: 0; }
 .play-choices .deck-card input { margin-top: 30px; }
