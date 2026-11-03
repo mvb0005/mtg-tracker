@@ -233,6 +233,7 @@ def get_deck(
         "facets": filters.facet_counts(groups),
         "breakdown": deck_breakdown(groups, cardinfo.deck_identity(groups, commander)),
         "identity": cardinfo.deck_identity(groups, commander),
+        "tokens": deck_tokens(groups),
         "list_count": sum(g["qty"] for g in groups),
         "equipped_count": sum(g["qty"] for g in groups if g["equipped"]),
         "elsewhere_count": sum(g["qty"] for g in owned if not g["equipped"]),
@@ -245,6 +246,22 @@ def get_deck(
         "borrowable_count": len(assembly_plan.of(assembly.BORROW)),
         "deck_names": {row["id"]: row["name"] for row in conn.execute("SELECT id, name FROM decks")},
     }
+
+
+def deck_tokens(groups: list[dict]) -> list[dict]:
+    """Every token (or emblem) the deck's cards can make, wanted cards
+    included: {name, type_line, image, sources (card names)}, by name. Only
+    as complete as the Scryfall cache and its `all_parts` links."""
+    tokens: dict[tuple[str, str], dict] = {}
+    for g in groups:
+        for t in cardinfo.tokens_for(g.get("scryfall_id"), g["card_name"]):
+            entry = tokens.setdefault((t["name"], t["type_line"]), {
+                "name": t["name"], "type_line": t["type_line"],
+                "image": cardinfo.token_image(t["id"]), "sources": [],
+            })
+            if g["card_name"] not in entry["sources"]:
+                entry["sources"].append(g["card_name"])
+    return sorted(tokens.values(), key=lambda t: (t["name"].casefold(), t["type_line"]))
 
 
 def _name_keys(card_name: str) -> set[str]:

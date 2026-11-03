@@ -252,3 +252,26 @@ def mana_value_order(card_name: str, info: CardInfo, *, descending: bool = True)
     colors, colored = color_weight(info.faces[0]["mana_cost"] if info.faces else "")
     value = info.cmc or 0
     return (info.cmc is None, -value if descending else value, -colors, -colored, card_name.casefold())
+
+
+def token_image(token_id: str) -> str:
+    """Scryfall's CDN path for a card id (tokens aren't cached, but their
+    images live at a path derived from the id alone)."""
+    return f"https://cards.scryfall.io/normal/front/{token_id[0]}/{token_id[1]}/{token_id}.jpg"
+
+
+def tokens_for(scryfall_id: str | None, card_name: str) -> list[dict]:
+    """Tokens (and emblems) a card makes, from Scryfall's `all_parts` links
+    on every cached printing of it, the card's own printing first: each
+    {id, name, type_line}, one per (name, type line)."""
+    idx = index()
+    own = idx.by_id.get(scryfall_id) if scryfall_id else None
+    found: dict[tuple[str, str], dict] = {}
+    for card in ([own] if own else []) + printings_named(card_name):
+        for part in card.get("all_parts") or []:
+            if part.get("component") != "token" or part["id"] == card["id"]:
+                continue
+            found.setdefault((part["name"], part.get("type_line") or ""), {
+                "id": part["id"], "name": part["name"], "type_line": part.get("type_line") or "",
+            })
+    return list(found.values())

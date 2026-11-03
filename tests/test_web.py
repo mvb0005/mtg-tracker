@@ -4,7 +4,7 @@ import re
 import httpx
 from fastapi.testclient import TestClient
 
-from mtgtracker import db, printings
+from mtgtracker import db, printings, scryfall
 from mtgtracker.decks import borrow, create_deck
 from mtgtracker.web.app import create_app, format_cents
 from tests.conftest import install_transport
@@ -626,3 +626,29 @@ def test_card_details_list_every_deck_with_counts(client, db_path):
         {"id": reign, "name": "Reign of Dragons", "count": 1, "current": True},
     ]
     assert [d["count"] for d in cards["Island"]["decks"]] == [34]
+
+
+def test_deck_page_lists_the_tokens_its_cards_make(client, db_path, cache_dir):
+    fdc = cache_dir / "fdc.json"
+    cards = json.loads(fdc.read_text())
+    dragon = {"object": "related_card", "id": "a1b2c3d4-0000-0000-0000-000000000001", "component": "token",
+              "name": "Dragon", "type_line": "Token Creature — Dragon", "uri": ""}
+    for card in cards:
+        if card["name"] == "Lathliss, Dragon Queen":
+            card["all_parts"] = [
+                {"object": "related_card", "id": card["id"], "component": "combo_piece",
+                 "name": card["name"], "type_line": "", "uri": ""},
+                dragon,
+            ]
+    fdc.write_text(json.dumps(cards))
+    scryfall.invalidate_cache()
+
+    conn = db.connect(db_path)
+    dragons = conn.execute("SELECT id FROM decks WHERE name = 'Reign of Dragons'").fetchone()["id"]
+    conn.close()
+    html = client.get(f"/decks/{dragons}").text
+    assert '<details class="breakdown deck-tokens" id="tokens">' in html
+    assert "1 kind this deck can make" in html
+    assert "<strong>Dragon</strong>" in html
+    assert "from Lathliss, Dragon Queen" in html
+    assert "https://cards.scryfall.io/normal/front/a/1/a1b2c3d4-0000-0000-0000-000000000001.jpg" in html
