@@ -97,7 +97,8 @@ cmd_up() {
   # (deploy/ship.sh --rollback). The old images stay in minikube.
   local tag
   tag="mtgtracker:$(git rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)"
-  [[ -z $(git status --porcelain -uno) ]] || tag+="-dirty"
+  # autocrlf: a Windows checkout has CRLF files, which WSL's git would otherwise call modified.
+  [[ -z $(git -c core.autocrlf=true status --porcelain -uno) ]] || tag+="-dirty"
   minikube image build -t "$tag" .
   "${KUBECTL_BASE[@]}" apply -f deploy/k8s/namespace.yaml >/dev/null
   apply_auth_config  # before the rollout, so the new pod starts with it
