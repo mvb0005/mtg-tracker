@@ -5,7 +5,8 @@ lots (ambiguous precon cards, basics) get a representative printing of the
 same name, flagged `exact=False` so the UI can say the printing isn't picked:
 it prefers a printing that comes in the lot's finish and isn't a promo, so
 an unpinned nonfoil Sol Ring shows the regular printing, not the foil-only
-starter promo. Cards with no cached printing at all get no image.
+starter promo. A name whose only cached printing is digital (MTGO) falls back
+to it for display; cards with no cached printing at all get no image.
 """
 
 from __future__ import annotations
@@ -149,8 +150,14 @@ class _Index:
         self.cards = cards
         self.by_id: dict[str, dict] = {}
         self.by_name: dict[str, list[dict]] = {}
+        # Digital-only printings (MTGO) are a last resort for display: a name
+        # resolved through the collection endpoint caches Scryfall's default
+        # printing, which for some cards (Breath of Life, Spawning Pit) is one.
+        self.digital_by_name: dict[str, list[dict]] = {}
         for card in cards:
             if card.get("digital"):
+                for name in names(card):
+                    self.digital_by_name.setdefault(name, []).append(card)
                 continue
             self.by_id[card["id"]] = card
             for name in names(card):
@@ -179,7 +186,8 @@ def lookup(scryfall_id: str | None, card_name: str, finish: str = "nonfoil") -> 
     if scryfall_id and (card := idx.by_id.get(scryfall_id)):
         return _info(card, exact=True)
 
-    candidates = idx.by_name.get(scryfall._normalize(card_name), [])
+    key = scryfall._normalize(card_name)
+    candidates = idx.by_name.get(key) or idx.digital_by_name.get(key, [])
     if not candidates:
         if card_name in BASIC_LAND_NAMES:
             # A basic land's facts are known even with no printing cached.

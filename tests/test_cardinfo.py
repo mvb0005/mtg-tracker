@@ -35,3 +35,28 @@ def test_colored_mana_outranks_colorless_at_equal_mana_value():
     }
     order = sorted(cards, key=lambda name: mana_value_order(name, cards[name]))
     assert order == ["Big Colorless", "Two Colors", "Mono Red", "One Pip", "Colorless Three", "Uncached"]
+
+
+def test_digital_only_printing_is_a_name_fallback(cache_dir):
+    """A card whose only cached printing is MTGO-only (the collection
+    endpoint's default for e.g. Spawning Pit) still gets its image and type,
+    but a paper printing wins whenever one is cached."""
+    import json
+
+    from mtgtracker import cardinfo, scryfall
+
+    def card(id_, name, set_, digital):
+        return {"id": id_, "name": name, "set": set_, "collector_number": "1",
+                "finishes": ["nonfoil"], "digital": digital, "type_line": "Artifact",
+                "cmc": 2.0, "image_uris": {"normal": f"https://img/{id_}"}}
+
+    (cache_dir / "cards").mkdir(exist_ok=True)
+    for c in (card("d1", "Spawning Pit", "td2", True), card("d2", "Sol Ring", "zzz", True)):
+        (cache_dir / "cards" / f"{c['id']}.json").write_text(json.dumps(c))
+    scryfall.invalidate_cache()
+
+    pit = cardinfo.lookup(None, "Spawning Pit")
+    assert (pit.image, pit.type_line, pit.exact) == ("https://img/d1", "Artifact", False)
+    assert cardinfo.lookup("d1", "Spawning Pit").exact is False  # never pinned to MTGO
+    assert cardinfo.lookup(None, "Sol Ring").image != "https://img/d2"  # fdc paper printing
+    assert cardinfo.printings_named("Spawning Pit") == []
