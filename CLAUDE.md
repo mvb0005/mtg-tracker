@@ -32,6 +32,12 @@ deploy/minikube.sh start | up | load-db | pull-db | pull-restore NAME [DEST] | r
 
 The CLI defaults to `data/mtgtracker.db` and `receipts/`, and every command runs migrations on connect. Linting is ruff, configured in `pyproject.toml`. `ruff format` is intentionally not enforced. `B008` is suppressed for `typer.Option`/`Argument` and `fastapi.Depends` via `extend-immutable-calls`.
 
+## Branches and shipping
+
+- `main` is the main line, and what ships. Do feature work on a branch off `main`.
+- To land a branch, rebuild it on `main` as a series of small commits, each one reasonable change that makes sense at a glance (they don't each have to pass). Then fast-forward `main` and push. Never force-push `main`.
+- Ship with `deploy/ship.sh` (the `deploy` skill): tests (`-n auto`), deploy, a live check, and the rollback it prints. Run it from Git Bash on Windows, in this clone. The WSL clone (`/home/mvb/mtg-tracker`) has the `.env`; keep it on `main`, pulled.
+
 ## Architecture
 
 **Data flow:** `mtg import-order` → `importers/order_wallet.py` (Apple Wallet `.order` zip → `transactions` + `products` + content-addressed `receipts/<sha256>.order`) → for each product, `importers/precon_decklist.py` matches `display_name` against `seed/precon_decklists/*.json`. On a match it resolves the list against Scryfall, creates a deck with one `lots` row per physical card (all equipped), and calls `allocation.allocate()`.
