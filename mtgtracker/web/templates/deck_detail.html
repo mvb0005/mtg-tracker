@@ -62,6 +62,7 @@
 {% endif %}
 
 {% if groups %}{% include "_deck_breakdown.html" %}{% endif %}
+{% if tokens %}{% include "_deck_tokens.html" %}{% endif %}
 
 {% if deck.format == "Commander" and can_edit %}
 <details class="commander-picker"{% if not deck.commander and can_edit %} open{% endif %}>

@@ -1,0 +1,22 @@
+{# Tokens the deck's cards can make (queries.deck_tokens, from Scryfall's
+   all_parts links in the cache). Token tiles are captioned, unlike card
+   tiles: the image doesn't say which of your cards makes it. #}
+<details class="breakdown deck-tokens" id="tokens">
+  <summary>
+    <span class="deck-notes-label">Tokens</span>
+    <span class="deck-notes-first">{{ tokens | length }} kind{{ "s" if tokens | length != 1 }} this deck can make</span>
+    <span class="breakdown-more"><span>Show</span></span>
+  </summary>
+  <div class="token-grid">
+    {% for t in tokens %}
+    <figure class="token">
+      <img src="{{ t.image }}" alt="{{ t.name }} ({{ t.type_line }})" loading="lazy" referrerpolicy="no-referrer">
+      <figcaption>
+        <strong>{{ t.name }}</strong> <span class="subtle">{{ t.type_line | replace("Token ", "", 1) }}</span>
+        <span class="token-from">from {{ t.sources | join(", ") }}</span>
+      </figcaption>
+    </figure>
+    {% endfor %}
+  </div>
+  <p class="subtle token-note">From Scryfall's links between cards and the tokens they make. Cards without cached data, and effects that copy other permanents, aren't listed.</p>
+</details>
