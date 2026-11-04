@@ -1053,31 +1053,6 @@ body[data-identity] .deck-section-head { border-bottom: 0; padding-bottom: 6px; 
 .play-friends form { margin: 10px 0 0; }
 .play-share { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin: 12px 0 18px; }
 .play-share .field { margin: 0; flex: 1 1 240px; }
-.play-player { display: grid; grid-template-columns: auto 1fr auto; gap: 2px 12px; padding: 8px; align-items: center; }
-.play-player-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.play-player { grid-template-rows: minmax(47px, auto); }
-.play-player.open-seat .play-name, .play-player.open-seat .play-meta { color: var(--muted); }
-.cmd-mini.open { border-style: dashed; cursor: default; }
-.play-choices .deck-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: stretch; border-bottom: 1px solid var(--border); }
-.play-choices .deck-row label.deck-card { display: grid; grid-template-columns: 22px 56px 1fr; gap: 2px 12px; align-items: start; margin: 0; }
-.play-choices .deck-card input { margin-top: 30px; }
-.play-choices .deck-body { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; min-width: 0; }
-.play-choices .deck-body .play-meta, .play-choices .deck-body .cmd-stats { flex: 1 1 100%; }
-.cmd-mini { width: 34px; height: 47px; border-radius: 4px; object-fit: cover; border: 1px solid var(--border); cursor: zoom-in; }
-.cmd-thumb { width: 56px; height: 78px; border-radius: 5px; object-fit: cover; border: 1px solid var(--border); cursor: zoom-in; }
-.cmd-mini.empty, .cmd-thumb.empty { display: grid; place-items: center; font-size: 0.7rem; color: var(--muted); cursor: default; }
-.cmd-stats { font-size: 0.82rem; color: var(--accent); font-weight: 600; }
-.cmd-modal { position: fixed; inset: 0; z-index: 50; background: rgb(0 0 0 / 0.78); display: grid; place-items: center; padding: 16px; }
-.cmd-modal-box {
-  max-width: 580px; width: 100%; display: grid; grid-template-columns: auto 1fr; gap: 16px;
-  padding: 16px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface);
-}
-.cmd-modal-img { width: 240px; border-radius: 10px; }
-.cmd-modal-info { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.cmd-oracle { white-space: pre-line; line-height: 1.4; margin: 0; }
-@media (max-width: 540px) {
-  .cmd-modal-box { grid-template-columns: 1fr; justify-items: center; }
-}
 .icon-btn {
   width: 36px; min-width: 36px; padding: 0; display: grid; place-items: center;
   font: 700 1.15rem/1 var(--font-body); border-radius: 6px; cursor: pointer;

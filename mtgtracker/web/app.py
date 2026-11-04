@@ -116,6 +116,8 @@ def static_version(path: str) -> str:
 
 
 templates.env.globals["static_version"] = static_version
+# The lobby script and styles the web lobby shares with the Discord Activity live under /discord/static.
+templates.env.globals["discord_static_version"] = discord_routes.asset_version
 templates.env.globals["basic_names"] = BASIC_LAND_NAMES
 templates.env.globals["sorts"] = filters.SORTS
 templates.env.globals["colors"] = filters.COLORS
