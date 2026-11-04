@@ -7,6 +7,6 @@ with no tracker account. It touches the rest of the tracker only through the own
 module (starting a game):
 
 - `auth`: the code exchange, guild membership and session tokens.
-- `rooms`: one lobby per Activity instance: who is here, their decks, the shared AI opponents.
-- `routes`: /discord/ (the Activity page) and its API.
+- `routes`: /discord/ (the Activity page) and its API. Its lobby is one per Activity instance, kept by
+  `play.lobbies` and drawn by static/lobby.js, the same as the web lobby's.
 """
