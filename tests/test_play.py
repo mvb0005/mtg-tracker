@@ -491,6 +491,10 @@ def test_open_a_lobby_and_play_with_a_friend(client, forge, db_path):
     assert page.status_code == 200
     assert "play-lobby.js" in page.text
     assert client.get("/static/play-lobby.js").status_code == 200
+    # The lobby itself is the Discord Activity's (discord/static/lobby.js), by a versioned name.
+    assert 'data-lobby="' in page.text and "/discord/static/lobby.js?v=" in client.get("/static/play-lobby.js").text
+    assert 'href="/discord/static/lobby.css?v=' in page.text
+    assert "immutable" in client.get("/discord/static/lobby.js?v=x").headers["cache-control"]
 
     matt_deck = _deck(db_path)["id"]
     first = _lobby(client, code).json()

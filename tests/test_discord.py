@@ -9,7 +9,8 @@ import httpx
 import pytest
 
 from mtgtracker import db
-from mtgtracker.discord import auth, rooms
+from mtgtracker.discord import auth
+from mtgtracker.play import lobbies
 from mtgtracker.play import routes as play
 
 from .conftest import install_transport
@@ -68,7 +69,7 @@ def discord(monkeypatch, cache_dir):
     monkeypatch.setenv("FORGE_CONTROL_SECRET", SECRET)
     monkeypatch.setenv("PLAY_RESULTS_URL", "http://tracker.test")
     monkeypatch.setattr(auth, "EXCHANGES", auth.Limiter())
-    rooms.clear()
+    lobbies.clear()
     play._IMPORTED.clear()
     fake, forge = FakeDiscord(), FakeGameServer()
     fake.forge = forge
@@ -77,7 +78,7 @@ def discord(monkeypatch, cache_dir):
         httpx.MockTransport(lambda r: fake(r) if r.url.host == "discord.com" else forge(r)),
     )
     yield fake
-    rooms.clear()
+    lobbies.clear()
     play._IMPORTED.clear()
 
 
@@ -103,6 +104,8 @@ def test_the_activity_page_loads_its_own_files(client, discord):
     assert 'data-client-id="662512381221535764"' in page.text
     assert 'href="static/activity.css?v=' in page.text
     assert 'src="static/activity.js?v=' in page.text
+    assert 'data-lobby="' in page.text, "activity.js imports the shared lobby at the page's version"
+    assert 'href="static/lobby.css?v=' in page.text
     assert page.headers["cache-control"] == "no-cache"
     assert '<a href="terms">' in page.text and '<a href="privacy">' in page.text
     assert 'data-legal="https://testserver/discord/"' in page.text
@@ -150,6 +153,28 @@ def test_everyone_in_an_activity_shares_one_room(client, discord, db_path):
     assert _room(client, alex).json()["opponents"] == ["neyali"], "Alex sees the AI Matt added"
     other = _room(client, alex, instance="another-instance").json()
     assert [m["name"] for m in other["members"]] == ["Alex"], "another Activity is another room"
+
+
+# What lobby.js reads of a lobby and of each member's deck: both the web lobby and the Activity's send it.
+LOBBY_KEYS = {
+    "you", "members", "opponents", "maxSeats", "decks", "roster", "starting", "started", "error", "problem",
+}
+MEMBER_KEYS = {"id", "name", "avatar", "guest", "deck"}
+DECK_KEYS = {"id", "name", "commander", "archetype", "plan", "manaCost", "typeLine", "oracleText", "pt"}
+
+
+def test_both_lobbies_send_what_the_shared_lobby_draws(client, discord, db_path):
+    deck = _deck(db_path)["id"]
+    activity = _room(client, _session(client, discord, "111", "Matt"), deckId=deck).json()
+    code = client.post("/play/lobby", follow_redirects=False).headers["location"].rsplit("/", 1)[-1]
+    web = client.post(f"/play/lobby/{code}", json={"deckId": deck}).json()
+    for view in (activity, web):
+        assert LOBBY_KEYS.issubset(view)
+        [member] = view["members"]
+        assert MEMBER_KEYS.issubset(member)
+        assert DECK_KEYS.issubset(member["deck"])
+        assert all(DECK_KEYS.issubset(d) for d in view["decks"])
+    assert activity["members"][0]["deck"]["name"] == web["members"][0]["deck"]["name"] == "Reign of Dragons"
 
 
 def test_starting_seats_everyone_with_a_deck(client, discord, db_path):
@@ -236,8 +261,8 @@ def test_a_room_forgets_people_who_left(client, discord, monkeypatch):
     matt = _session(client, discord, "111", "Matt")
     alex = _session(client, discord, "222", "Alex")
     _room(client, alex)
-    later = time.time() + rooms.STALE + 1
-    monkeypatch.setattr(rooms.time, "time", lambda: later)
+    later = time.time() + lobbies.STALE + 1
+    monkeypatch.setattr(lobbies.time, "time", lambda: later)
     assert [m["name"] for m in _room(client, matt).json()["members"]] == ["Matt"]
 
 
