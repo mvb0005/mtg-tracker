@@ -1,0 +1,60 @@
+/* The lobby both lobby pages draw (lobby.js): the tracker's /play/lobby/<code> and the Discord Activity's.
+   Only lb- classes, on the tokens both pages define (--border, --surface, --text, --muted, --accent,
+   --font-display, --font-body), in light and dark. Buttons, quiet text and errors keep each page's styles. */
+.lb-seats, .lb-decks { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.lb-seat {
+  display: flex; align-items: center; gap: 12px; min-height: 65px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+}
+.lb-seat.open { border-style: dashed; background: transparent; }
+.lb-seat.open .lb-name, .lb-seat.open .lb-meta { color: var(--muted); }
+.lb-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.lb-name { font-family: var(--font-display); font-weight: 600; font-size: 1.05rem; overflow-wrap: anywhere; }
+.lb-meta { color: var(--muted); font-size: 0.9rem; }
+.lb-mini, .lb-thumb { flex: none; object-fit: cover; border: 1px solid var(--border); cursor: zoom-in; }
+.lb-mini { width: 34px; height: 47px; border-radius: 4px; }
+.lb-thumb { width: 56px; height: 78px; border-radius: 5px; }
+.lb-mini.empty, .lb-thumb.empty {
+  display: grid; place-items: center; font-size: 0.7rem; color: var(--muted); cursor: default;
+}
+.lb-mini.open { border-style: dashed; cursor: default; }
+.lb-add:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.lb-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 14px 0 4px; }
+.lb-import { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-bottom: 6px; }
+.lb-import-input {
+  font: 0.92rem var(--font-body); padding: 9px 12px; border-radius: 6px; min-width: 0; width: 100%;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+}
+.lb-import-input:focus { outline: none; border-color: var(--accent); }
+.lb-deck { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: stretch; }
+.lb-pick {
+  display: grid; grid-template-columns: auto 56px minmax(0, 1fr); gap: 6px 12px; align-items: start; margin: 0;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); cursor: pointer;
+}
+.lb-pick:has(input:checked) { border-color: var(--accent); }
+.lb-pick input { margin-top: 30px; accent-color: var(--accent); }
+.lb-deck-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.lb-deck-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.lb-tag {
+  font-size: 0.75rem; font-weight: 600; padding: 1px 7px; border-radius: 99px;
+  border: 1px solid var(--border); color: var(--muted);
+}
+.lb-stats { font-size: 0.82rem; color: var(--accent); font-weight: 600; }
+.lb-oracle {
+  font-size: 0.82rem; line-height: 1.35; white-space: pre-line; opacity: 0.86; margin: 2px 0 0;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+}
+.lb-oracle.full { font-size: 0.9rem; opacity: 1; display: block; overflow: visible; }
+.lb-modal {
+  position: fixed; inset: 0; z-index: 50; background: rgb(0 0 0 / 0.78);
+  display: grid; place-items: center; padding: 16px;
+}
+.lb-modal-box {
+  max-width: 580px; width: 100%; display: grid; grid-template-columns: auto 1fr; gap: 16px;
+  padding: 16px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface);
+}
+.lb-modal-img { width: 240px; border-radius: 10px; }
+.lb-modal-info { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+@media (max-width: 540px) {
+  .lb-modal-box { grid-template-columns: 1fr; justify-items: center; }
+}
