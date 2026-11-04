@@ -6,8 +6,10 @@
   <title>Matt's Forge</title>
   {# Relative URLs only: inside Discord this page is the Activity's root, served from the tracker's /discord/. #}
   <link rel="stylesheet" href="static/activity.css?v={{ version['activity.css'] }}">
+  <link rel="stylesheet" href="static/lobby.css?v={{ version['lobby.css'] }}">
 </head>
-<body data-client-id="{{ client_id }}" data-legal="{{ legal }}">
+{# data-lobby: the version of the lobby the web lobby draws too, which activity.js imports. #}
+<body data-client-id="{{ client_id }}" data-legal="{{ legal }}" data-lobby="{{ version['lobby.js'] }}">
   <main id="app">
     <h1>Matt's Forge</h1>
     <p class="status" id="status">Signing in through Discord…</p>
