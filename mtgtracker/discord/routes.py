@@ -12,7 +12,6 @@ import hashlib
 import json
 import sqlite3
 import threading
-import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -21,17 +20,15 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from mtgtracker import db, scryfall
-from mtgtracker.discord import auth, rooms
+from mtgtracker.discord import auth
+from mtgtracker.play import lobbies, tables
 from mtgtracker.play import routes as play
-from mtgtracker.play import tables
 from mtgtracker.services import ServiceError
-from mtgtracker.web import queries
 from mtgtracker.web.deps import render
 
 router = APIRouter()
 STATIC = Path(__file__).parent / "static"
-ROSTER_SECONDS = 60.0
-_roster: tuple[float, list[dict]] = (0.0, [])
+PAGE_FILES = ("activity.js", "activity.css", "lobby.js", "lobby.css")  # what the Activity's page loads
 
 
 def _error(status: int, code: str, message: str) -> JSONResponse:
@@ -49,7 +46,7 @@ def activity(request: Request):
     discord = auth.Discord.from_env()
     page = render(
         request, "activity.html", client_id=discord.client_id if discord else "",
-        version={name: _version(name) for name in ("activity.js", "activity.css")},
+        version={name: asset_version(name) for name in PAGE_FILES},
         # Inside Discord the footer's links open in the browser, which needs this site's own address.
         legal=f"https://{request.headers.get('host', '')}/discord/",
     )
@@ -60,16 +57,17 @@ def activity(request: Request):
 @router.get("/discord/terms", response_class=HTMLResponse)
 def terms(request: Request):
     """The Terms of Service, here so they're public: the application's settings in Discord link to them."""
-    return render(request, "terms.html", version={"activity.css": _version("activity.css")})
+    return render(request, "terms.html", version={"activity.css": asset_version("activity.css")})
 
 
 @router.get("/discord/privacy", response_class=HTMLResponse)
 def privacy(request: Request):
-    return render(request, "privacy.html", version={"activity.css": _version("activity.css")})
+    return render(request, "privacy.html", version={"activity.css": asset_version("activity.css")})
 
 
-def _version(name: str) -> str:
-    """Short content hash of an Activity file, appended as ?v= (as the tracker's static_version does)."""
+def asset_version(name: str) -> str:
+    """Short content hash of a file under /discord/static, appended as ?v= (as the tracker's static_version
+    does). Not cached: the Activity's page is no-cache, so a new deploy's files reach an open Activity."""
     return hashlib.sha256((STATIC / name).read_bytes()).hexdigest()[:12]
 
 
@@ -126,56 +124,9 @@ def signed_in(request: Request) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-ROSTER_KEYS = (
-    "id", "commander", "archetype", "plan", "deck", "colors",
-    "manaCost", "typeLine", "oracleText", "pt", "img",
-)
-
-
-def _opponents() -> list[dict]:
-    """The curated AI opponents, asked of a game server at most once a ROSTER_SECONDS (not on every poll)."""
-    global _roster
-    fetched, roster = _roster
-    if time.time() - fetched > ROSTER_SECONDS or not roster:
-        where = tables.from_env()
-        if where is None:
-            raise ServiceError("No game server is set up for this tracker")
-        roster = [
-            {k: o.get(k) for k in ROSTER_KEYS if o.get(k) is not None or k in ("id", "commander", "archetype", "plan", "deck", "colors")}
-            for o in where.lobby().opponents()
-        ]
-        _roster = (time.time(), roster)
-    return roster
-
-
 def _decks(conn: sqlite3.Connection) -> list[dict]:
     owner = auth.deck_owner(conn)
-    if owner is None:
-        return []
-    out = []
-    for imp in play.imported_decks(conn):
-        out.append({k: imp.get(k) for k in (
-            "id", "name", "commander", "archetype", "plan", "colors",
-            "img", "manaCost", "typeLine", "oracleText", "pt", "sourceUrl",
-        )})
-    for d in queries.list_decks(conn, owner.id):
-        if not d["commander"]:
-            continue
-        enriched = play.with_blurb(d)
-        out.append({
-            "id": d["id"],
-            "name": d["name"],
-            "commander": d["commander"],
-            "archetype": enriched["archetype"],
-            "plan": enriched["plan"],
-            "colors": "".join(d.get("identity") or ()),
-            "img": enriched["img"],
-            "manaCost": enriched["manaCost"],
-            "typeLine": enriched["typeLine"],
-            "oracleText": enriched["oracleText"],
-            "pt": enriched["pt"],
-        })
-    return out
+    return [] if owner is None else play.lobby_decks(conn, owner.id)
 
 
 def _live(you: str, my_name: str = "") -> tuple[list[dict], set[str]]:
@@ -203,10 +154,10 @@ def _live(you: str, my_name: str = "") -> tuple[list[dict], set[str]]:
             if s.get("kind") == "human" and s.get("ticket"):
                 if p == person or (my_name and s.get("name") == my_name):
                     seat_ticket = s.get("ticket")
-        in_game.update(rooms.seated_ids(match_id))
+        in_game.update(lobbies.seated_ids(match_id))
         humans = [s.get("name", "Player") for s in seats if s.get("kind") == "human"]
         ais = [s.get("name", "AI") for s in seats if s.get("kind") == "ai"]
-        my_ticket = rooms.ticket_for(match_id, you) or seat_ticket
+        my_ticket = lobbies.ticket_for(match_id, you) or seat_ticket
         seated = any(s.get("person") == person for s in seats) or my_ticket is not None
         out.append({
             "matchId": match_id,
@@ -232,11 +183,11 @@ def _end_match(conn: sqlite3.Connection, match_id: str) -> None:
     except ServiceError:
         pass
     play.games.record_result(conn, {"matchId": match_id, "status": "ended", "summary": "Ended"})
-    rooms.clear_match(match_id)
+    lobbies.clear_match(match_id)
 
 
 def _view(
-    room: rooms.Room,
+    room: lobbies.Lobby,
     you: str,
     decks: list[dict],
     roster: list[dict],
@@ -246,47 +197,13 @@ def _view(
     guest: bool = False,
 ) -> dict:
     by_id: dict[int | str, dict] = {d["id"]: d for d in decks}
-    for o in roster:
-        by_id[o["id"]] = {
-            "id": o["id"],
-            "name": o["deck"],
-            "commander": o["commander"],
-            "archetype": o.get("archetype"),
-            "plan": o.get("plan"),
-            "colors": o.get("colors"),
-            "img": o.get("img"),
-            "manaCost": o.get("manaCost"),
-            "typeLine": o.get("typeLine"),
-            "oracleText": o.get("oracleText"),
-            "pt": o.get("pt"),
-        }
-    started = room.started
-    return {
-        "you": you,
-        "members": [
-            {
-                "id": m.id,
-                "name": m.name,
-                "avatar": m.avatar,
-                "guest": m.guest,
-                "deck": by_id.get(m.deck_id),
-            }
-            for m in sorted(room.members.values(), key=lambda m: m.joined)
-            if not m.in_game and (m.in_game is False and (m.id not in in_game or m.left_table))
-        ],
-        "opponents": room.opponents,
-        "maxSeats": play.MAX_SEATS,
-        "decks": decks,
-        "roster": roster,
-        "live": live,
-        "starting": room.starting,
-        "started": (
-            {"matchId": started["matchId"], "ticket": started["tickets"].get(you)} if started else None
-        ),
-        "error": room.error,
-        "problem": problem,
-        "guest": guest,
-    }
+    by_id |= {o["id"]: play.roster_deck(o) for o in roster}
+    view = play.lobby_view(
+        room, you, by_id.get, decks, roster, problem,
+        # Someone already seated in a running game watches from the table, unless they left it.
+        shown=lambda m: not m.in_game and (m.id not in in_game or m.left_table),
+    )
+    return view | {"live": live, "guest": guest}
 
 
 @router.post("/discord/api/room")
@@ -298,92 +215,33 @@ async def room(request: Request, conn: sqlite3.Connection = Depends(signed_in)):
         body = await request.json()
     except ValueError:
         body = {}
-    if not isinstance(body, dict) or not rooms.valid_instance(str(body.get("instanceId", ""))):
+    if not isinstance(body, dict) or not lobbies.valid_instance(str(body.get("instanceId", ""))):
         return _error(400, "bad_request", "No Activity instance")
     me = request.state.session
     guest = bool(me.get("g"))
-    imported_id = None
-    import_err = None
-    if isinstance(body.get("importUrl"), str) and body["importUrl"].strip():
-        try:
-            imp = play.import_deck_url(conn, body["importUrl"].strip())
-            imported_id = imp["id"]
-        except ServiceError as exc:
-            import_err = str(exc)
+    imported = play.lobby_import(conn, body)
     decks = _decks(conn)
     try:
-        roster, problem = _opponents(), None
+        roster, problem = play.opponents(), None
     except ServiceError as exc:
         roster, problem = [], str(exc)
-    with rooms.LOCK:
-        room = rooms.touch(body["instanceId"], me["d"], me["n"], me.get("a"), guest=guest)
-        if room.started and _over(conn, room.started["matchId"]):
-            room.started = None
-        if import_err is not None:
-            room.error = import_err
-        elif imported_id is not None:
-            room.members[me["d"]].deck_id = imported_id
-            room.error = None
+    with lobbies.LOCK:
+        key = lobbies.activity_key(body["instanceId"])
+        room = lobbies.touch(key, me["d"], me["n"], me.get("a"), guest=guest)
         if "inGame" in body:
             room.members[me["d"]].in_game = bool(body["inGame"])
             room.members[me["d"]].left_table = not bool(body["inGame"])
-        valid_decks = {d["id"] for d in decks} | {o["id"] for o in roster}
-        if "deckId" in body and body["deckId"] in valid_decks:
-            room.members[me["d"]].deck_id = body["deckId"]
-            room.error = None
-        if isinstance(body.get("opponents"), list):
-            known = {o["id"] for o in roster} | {f"deck:{d['id']}" for d in decks}
-            room.opponents = [str(o) for o in body["opponents"] if str(o) in known][: play.MAX_SEATS - 1]
-            room.error = None
-        start = bool(body.get("start")) and not room.started and not room.starting
-        if start:
-            room.starting = True
-            seated = sorted(
-                (m for m in room.members.values() if m.deck_id is not None and not m.in_game),
-                key=lambda m: m.joined,
-            )
-            picked = list(room.opponents)
+        start = lobbies.apply(conn, room, me["d"], body, decks, roster, play.MAX_SEATS, imported)
     if isinstance(body.get("endMatchId"), str) and body["endMatchId"].strip():
         _end_match(conn, body["endMatchId"].strip())
     if start:
-        _start(conn, room, seated, picked)
+        # Back from the table is the Activity's lobby (its root). Recorded under the deck owner.
+        play.start_lobby(
+            conn, room, auth.deck_owner(conn), *start, return_url="/", person=lambda m: f"discord:{m.id}"
+        )
     live, in_game = _live(me["d"], me.get("n", ""))
-    with rooms.LOCK:
+    with lobbies.LOCK:
         return _view(room, me["d"], decks, roster, live, in_game, problem, guest=guest)
-
-
-def _over(conn: sqlite3.Connection, match_id: str) -> bool:
-    row = conn.execute("SELECT status FROM play_games WHERE match_id = ?", (match_id,)).fetchone()
-    return row is not None and row["status"] != "playing"
-
-
-def _start(conn: sqlite3.Connection, room: rooms.Room, seated: list[rooms.Member], picked: list[str]) -> None:
-    """Starts the room's game: a seat per person with a deck, then the room's AIs; back from the table is the
-    Activity's lobby (its root). Recorded under the deck owner."""
-    error, started = None, None
-    try:
-        owner = auth.deck_owner(conn)
-        if owner is None:
-            raise ServiceError("This tracker has no owner to play decks from")
-        if not seated:
-            raise ServiceError("Pick a deck first")
-        seats = [play.Seat(m.name, f"discord:{m.id}", m.deck_id, m.avatar) for m in seated]
-        answer, tickets = play.start_table(conn, owner, seats, picked, return_url="/")
-        started = {
-            "matchId": answer["matchId"],
-            "tickets": {m.id: tickets.get(f"discord:{m.id}") for m in seated},
-        }
-    except ServiceError as exc:
-        error = str(exc)
-    with rooms.LOCK:
-        room.starting = False
-        room.started = started
-        room.error = error
-        if started:
-            for m in seated:
-                if m.id in room.members:
-                    room.members[m.id].in_game = True
-                    room.members[m.id].left_table = False
 
 
 @router.post("/discord/api/trace")
@@ -479,7 +337,7 @@ def card_img(request: Request, name: str = ""):
             media_type="image/jpeg",
             headers={"Cache-Control": "public, max-age=86400, immutable"},
         )
-    all_names = [front] + [o.get("commander", "") for o in _roster[1]] + list(play.DECK_BLURBS.keys())
+    all_names = [front] + [o.get("commander", "") for o in play._roster[1]] + list(play.DECK_BLURBS.keys())
     _warm_commander_urls(all_names, img_dir)
     url = _CMD_URLS.get(front.lower())
     if not url:

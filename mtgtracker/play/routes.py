@@ -447,47 +447,50 @@ async def play_start(request: Request, conn: sqlite3.Connection = Depends(get_co
 
 ROSTER_SECONDS = 60.0
 _roster: tuple[float, list[dict]] = (0.0, [])
+ROSTER_KEYS = (
+    "id", "commander", "archetype", "plan", "deck", "colors",
+    "manaCost", "typeLine", "oracleText", "pt", "img",
+)
 
 
-def _opponents() -> list[dict]:
+def opponents() -> list[dict]:
+    """The curated AI opponents, asked of a game server at most once a ROSTER_SECONDS (not on every poll)."""
     global _roster
     fetched, roster = _roster
     if time.time() - fetched > ROSTER_SECONDS or not roster:
         where = tables.from_env()
         if where is None:
             raise ServiceError("No game server is set up for this tracker")
-        roster = where.lobby().opponents()
+        roster = [{k: o.get(k) for k in ROSTER_KEYS} for o in where.lobby().opponents()]
         _roster = (time.time(), roster)
     return roster
 
 
-def _decks_for(conn: sqlite3.Connection, person_id: int) -> list[dict]:
-    out = []
-    for imp in imported_decks(conn):
-        out.append({k: imp.get(k) for k in (
-            "id", "name", "commander", "archetype", "plan", "colors",
-            "manaCost", "typeLine", "oracleText", "pt",
-        )})
+def roster_deck(o: dict) -> dict:
+    """A curated AI opponent's deck, as a player who picks it plays it."""
+    rest = {k: o.get(k) for k in ROSTER_KEYS if k not in ("id", "deck")}
+    return {"id": o["id"], "name": o.get("deck"), **rest}
+
+
+LOBBY_DECK_KEYS = (
+    "id", "name", "commander", "archetype", "plan", "colors",
+    "img", "manaCost", "typeLine", "oracleText", "pt",
+)
+
+
+def lobby_decks(conn: sqlite3.Connection, person_id: int) -> list[dict]:
+    """The decks a lobby offers: imported ones, then this person's with a commander."""
+    out = [{k: imp.get(k) for k in LOBBY_DECK_KEYS} for imp in imported_decks(conn)]
     for d in queries.list_decks(conn, person_id):
-        if not d["commander"]:
-            continue
-        enriched = with_blurb(d)
-        out.append({
-            "id": d["id"],
-            "name": d["name"],
-            "commander": d["commander"],
-            "archetype": enriched["archetype"],
-            "plan": enriched["plan"],
-            "colors": "".join(d.get("identity") or ()),
-            "manaCost": enriched["manaCost"],
-            "typeLine": enriched["typeLine"],
-            "oracleText": enriched["oracleText"],
-            "pt": enriched["pt"],
-        })
+        if d["commander"]:
+            enriched = with_blurb(d)
+            colors = "".join(d.get("identity") or ())
+            out.append({k: enriched.get(k) for k in LOBBY_DECK_KEYS} | {"colors": colors})
     return out
 
 
 def _picked_deck(conn: sqlite3.Connection, deck_id: int | str | None, roster: list[dict]) -> dict | None:
+    """A web lobby member's deck: each picks from their own decks, so look it up wherever it is."""
     if deck_id is None:
         return None
     if isinstance(deck_id, int) or (isinstance(deck_id, str) and str(deck_id).isdigit()):
@@ -500,40 +503,39 @@ def _picked_deck(conn: sqlite3.Connection, deck_id: int | str | None, roster: li
             return imp
     for o in roster:
         if o["id"] == deck_id:
-            return {
-                "id": o["id"],
-                "name": o.get("deck"),
-                "commander": o["commander"],
-                "archetype": o.get("archetype"),
-                "plan": o.get("plan"),
-                "colors": o.get("colors"),
-                "manaCost": o.get("manaCost"),
-                "typeLine": o.get("typeLine"),
-                "oracleText": o.get("oracleText"),
-                "pt": o.get("pt"),
-            }
+            return roster_deck(o)
     return None
 
 
-def _lobby_view(
-    conn: sqlite3.Connection,
+def lobby_import(conn: sqlite3.Connection, body: dict) -> tuple[int | str | None, str | None]:
+    """A poll's {importUrl}: the imported deck's id, or why it couldn't be imported."""
+    url = body.get("importUrl")
+    if not isinstance(url, str) or not url.strip():
+        return None, None
+    try:
+        return import_deck_url(conn, url.strip())["id"], None
+    except ServiceError as exc:
+        return None, str(exc)
+
+
+def lobby_view(
     lobby: lobbies.Lobby,
     you: str,
+    deck_of,
     decks: list[dict],
     roster: list[dict],
     problem: str | None,
+    shown=lambda m: not m.in_game,
 ) -> dict:
+    """What a lobby page polls. The web lobby and the Discord Activity's draw it with the same script
+    (discord/static/lobby.js), so both send this shape; each adds its own keys."""
     started = lobby.started
-    ticket = (started or {}).get("tickets", {}).get(you)
-    where = tables.from_env()
-    table_url = where.table_link(started["matchId"], ticket) if where and started and ticket else None
     return {
         "you": you,
-        "code": lobby.code,
         "members": [
-            {"id": m.id, "name": m.name, "deck": _picked_deck(conn, m.deck_id, roster)}
+            {"id": m.id, "name": m.name, "avatar": m.avatar, "guest": m.guest, "deck": deck_of(m.deck_id)}
             for m in sorted(lobby.members.values(), key=lambda m: m.joined)
-            if not m.in_game
+            if shown(m)
         ],
         "opponents": lobby.opponents,
         "maxSeats": MAX_SEATS,
@@ -541,36 +543,36 @@ def _lobby_view(
         "roster": roster,
         "starting": lobby.starting,
         "started": (
-            {"matchId": started["matchId"], "ticket": ticket, "tableUrl": table_url} if started else None
+            {"matchId": started["matchId"], "ticket": started["tickets"].get(you)} if started else None
         ),
         "error": lobby.error,
         "problem": problem,
     }
 
 
-def _start_lobby(
-    conn: sqlite3.Connection, lobby: lobbies.Lobby, host, seated: list[lobbies.Member], picked: list[str]
+def start_lobby(
+    conn: sqlite3.Connection,
+    lobby: lobbies.Lobby,
+    host,
+    seated: list[lobbies.Member],
+    picked: list[str],
+    return_url: str,
+    person=lambda m: m.id,
 ) -> None:
+    """Starts a lobby's game: a seat per member with a deck, then its AIs, recorded under `host`. `person`
+    is who a member is to the game server."""
     error, started = None, None
     try:
+        if host is None:
+            raise ServiceError("This tracker has no owner to play decks from")
         if not seated:
             raise ServiceError("Pick a deck first")
-        seats = [Seat(m.name, m.id, m.deck_id) for m in seated]
-        answer, tickets = start_table(
-            conn, host, seats, picked, return_url=f"/play/lobby/{lobby.code}"
-        )
-        started = {"matchId": answer["matchId"], "tickets": tickets}
+        seats = [Seat(m.name, person(m), m.deck_id, m.avatar) for m in seated]
+        answer, tickets = start_table(conn, host, seats, picked, return_url=return_url)
+        started = {"matchId": answer["matchId"], "tickets": {m.id: tickets.get(person(m)) for m in seated}}
     except ServiceError as exc:
         error = str(exc)
-    with lobbies.LOCK:
-        lobby.starting = False
-        lobby.started = started
-        lobby.error = error
-        if started:
-            for m in seated:
-                if m.id in lobby.members:
-                    lobby.members[m.id].in_game = True
-                    lobby.members[m.id].left_table = False
+    lobbies.finish_start(lobby, seated, started, error)
 
 
 @router.post("/play/lobby")
@@ -601,56 +603,26 @@ async def play_lobby_sync(code: str, request: Request, conn: sqlite3.Connection 
         body = {}
     if not isinstance(body, dict):
         body = {}
-    imported_id = None
-    import_err = None
-    if isinstance(body.get("importUrl"), str) and body["importUrl"].strip():
-        try:
-            imp = import_deck_url(conn, body["importUrl"].strip())
-            imported_id = imp["id"]
-        except ServiceError as exc:
-            import_err = str(exc)
-    decks = _decks_for(conn, person.id)
+    imported = lobby_import(conn, body)
+    decks = lobby_decks(conn, person.id)
     try:
-        roster, problem = _opponents(), None
+        roster, problem = opponents(), None
     except ServiceError as exc:
         roster, problem = [], str(exc)
-    start, seated, picked = False, [], []
     with lobbies.LOCK:
         lobby = lobbies.touch(code, you, person.display_name)
-        if lobby.started:
-            row = conn.execute(
-                "SELECT status FROM play_games WHERE match_id = ?", (lobby.started["matchId"],)
-            ).fetchone()
-            if row is not None and row["status"] != "playing":
-                lobby.started = None
-                for m in lobby.members.values():
-                    m.in_game = False
-                    m.left_table = False
-        if import_err is not None:
-            lobby.error = import_err
-        elif imported_id is not None:
-            lobby.members[you].deck_id = imported_id
-            lobby.error = None
-        valid_decks = {d["id"] for d in decks} | {o["id"] for o in roster}
-        if "deckId" in body and body["deckId"] in valid_decks:
-            lobby.members[you].deck_id = body["deckId"]
-            lobby.error = None
-        if isinstance(body.get("opponents"), list):
-            known = {o["id"] for o in roster} | {f"deck:{d['id']}" for d in decks}
-            lobby.opponents = [str(o) for o in body["opponents"] if str(o) in known][: MAX_SEATS - 1]
-            lobby.error = None
-        start = bool(body.get("start")) and not lobby.started and not lobby.starting
-        if start:
-            lobby.starting = True
-            seated = sorted(
-                (m for m in lobby.members.values() if m.deck_id is not None and not m.in_game),
-                key=lambda m: m.joined,
-            )
-            picked = list(lobby.opponents)
+        start = lobbies.apply(conn, lobby, you, body, decks, roster, MAX_SEATS, imported)
     if start:
-        _start_lobby(conn, lobby, person, seated, picked)
+        start_lobby(conn, lobby, person, *start, return_url=f"/play/lobby/{code}")
     with lobbies.LOCK:
-        return _lobby_view(conn, lobby, you, decks, roster, problem)
+        view = lobby_view(
+            lobby, you, lambda deck_id: _picked_deck(conn, deck_id, roster), decks, roster, problem
+        )
+    view["code"] = code
+    where = tables.from_env()
+    if view["started"] and view["started"]["ticket"] and where:
+        view["started"]["tableUrl"] = where.table_link(view["started"]["matchId"], view["started"]["ticket"])
+    return view
 
 
 @router.post("/play/end")
